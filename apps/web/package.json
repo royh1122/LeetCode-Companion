@@ -1,0 +1,36 @@
+{
+  "name": "@lcc/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 4317",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 4317",
+    "dev:demo": "node -e \"process.env.LCC_DATA_DIR=require('path').resolve('../../data/demo');require('child_process').spawn('npx',['next','dev','-H','127.0.0.1','-p','4318'],{stdio:'inherit',shell:true,env:process.env})\""
+  },
+  "dependencies": {
+    "@lcc/db": "*",
+    "@lcc/scheduler": "*",
+    "@lcc/shared": "*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "diff": "^9.0.0",
+    "geist": "^1.9.2",
+    "highlight.js": "^11.12.0",
+    "lucide-react": "^1.70.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.5"
+  }
+}

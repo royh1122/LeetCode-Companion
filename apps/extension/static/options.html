@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeetCode Companion — Options</title>
+    <link rel="stylesheet" href="panel.css" />
+    <style>
+      body { max-width: 560px; margin: 0 auto; padding: 24px 16px; min-height: auto; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      .field { display: flex; flex-direction: column; gap: 4px; margin: 14px 0; }
+      input[type="text"], input[type="password"] { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
+      #status { margin-top: 12px; }
+      ul { padding-left: 18px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <h1>LeetCode Companion</h1>
+    <p class="muted">Pair this extension with your local dashboard. It only ever talks to this server.</p>
+    <form id="form">
+      <div class="field">
+        <label class="label" for="server">Dashboard URL</label>
+        <input id="server" type="text" placeholder="http://127.0.0.1:4317" required />
+      </div>
+      <div class="field">
+        <label class="label" for="token">Pairing token (Dashboard → Settings → Browser extension)</label>
+        <input id="token" type="password" autocomplete="off" required />
+      </div>
+      <div class="btns">
+        <button class="primary" type="submit">Save &amp; test connection</button>
+      </div>
+    </form>
+    <div id="status" class="small"></div>
+    <h2 class="label" style="margin-top:24px">What this extension does</h2>
+    <ul class="small">
+      <li>On leetcode.com, it observes the page's own Submit / Run requests and their results to record your code, language and verdict.</li>
+      <li>On leetcode.com/studyplan pages, it can read the plan's question list from what the page loaded, and sends it to your dashboard only when you click Import in the side panel.</li>
+      <li>It estimates active time from tab visibility, window focus and recent input (no keystroke contents are read or stored).</li>
+      <li>It never sends requests to LeetCode itself and never stores your LeetCode credentials.</li>
+      <li>Data is sent only to the dashboard URL above (localhost), authenticated with the pairing token.</li>
+    </ul>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

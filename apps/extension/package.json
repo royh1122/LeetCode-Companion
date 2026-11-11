@@ -1,0 +1,17 @@
+{
+  "name": "@lcc/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx build.ts",
+    "watch": "tsx build.ts --watch"
+  },
+  "dependencies": {
+    "@lcc/shared": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "esbuild": "^0.28.2"
+  }
+}

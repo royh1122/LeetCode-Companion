@@ -1,0 +1,45 @@
+{
+  "name": "leetcode-companion",
+  "private": true,
+  "license": "MIT",
+  "version": "0.1.0",
+  "description": "Local-first LeetCode preparation dashboard with automatic attempt tracking",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "npm run db:migrate && npm run dev -w @lcc/web",
+    "build": "npm run build -w @lcc/web && npm run ext:build",
+    "start": "npm run db:migrate && npm run start -w @lcc/web",
+    "app": "npm run build && npm run start",
+    "up": "tsx scripts/up.ts",
+    "down": "tsx scripts/down.ts",
+    "shortcuts": "tsx scripts/install-shortcuts.ts",
+    "db:generate": "npm run generate -w @lcc/db",
+    "db:migrate": "tsx scripts/db.ts migrate",
+    "db:backup": "tsx scripts/db.ts backup",
+    "db:restore": "tsx scripts/db.ts restore",
+    "db:export": "tsx scripts/db.ts export",
+    "db:import": "tsx scripts/db.ts import",
+    "ext:build": "npm run build -w @lcc/extension",
+    "ext:watch": "npm run watch -w @lcc/extension",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "tsx tests/e2e/run.ts",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/scheduler && tsc -p packages/db && tsc -p apps/extension && tsc -p apps/web --noEmit",
+    "demo": "tsx scripts/demo.ts",
+    "dev:demo": "npm run dev:demo -w @lcc/web"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^24.0.0",
+    "playwright": "^1.65.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

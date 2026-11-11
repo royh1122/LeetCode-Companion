@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "LeetCode Companion",
+  "short_name": "LC Companion",
+  "version": "0.1.0",
+  "description": "Tracks your own LeetCode practice sessions and submissions into your local LeetCode Companion dashboard.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "sidePanel", "alarms"],
+  "host_permissions": ["https://leetcode.com/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "LeetCode Companion",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://leetcode.com/*"],
+      "js": ["main-world.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://leetcode.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}

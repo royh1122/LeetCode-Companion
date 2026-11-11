@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeetCode Companion</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="top">
+      <span class="brand"><span class="logo">lc</span> Companion</span>
+      <button id="open-dash" class="ghost">Dashboard ↗</button>
+    </header>
+    <main id="main" aria-live="polite"></main>
+    <section id="session" hidden>
+      <div class="problem">
+        <div id="s-title" class="ptitle"></div>
+        <div id="s-meta" class="muted small"></div>
+      </div>
+      <div class="timer-row">
+        <div>
+          <div class="muted small">Active (estimate)</div>
+          <div id="s-active" class="timer">00:00</div>
+        </div>
+        <div>
+          <div class="muted small">Elapsed</div>
+          <div id="s-elapsed" class="timer secondary">00:00</div>
+        </div>
+        <button id="s-pause" class="secondary"></button>
+      </div>
+      <div id="s-capture" class="small"></div>
+      <div>
+        <div class="label">Submissions</div>
+        <ul id="s-subs" class="subs"></ul>
+      </div>
+      <div>
+        <label class="label" for="s-notes">Notes <span id="s-notes-status" class="muted small"></span></label>
+        <textarea id="s-notes" rows="4" maxlength="20000" placeholder="Approach, mistakes, edge cases…"></textarea>
+      </div>
+      <div class="complexity">
+        <div>
+          <label class="label" for="s-tc">Time complexity</label>
+          <input id="s-tc" class="mono" type="text" maxlength="200" placeholder="O(n)" autocomplete="off" spellcheck="false" />
+        </div>
+        <div>
+          <label class="label" for="s-sc">Space complexity</label>
+          <input id="s-sc" class="mono" type="text" maxlength="200" placeholder="O(1)" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <fieldset>
+        <legend class="label">How did it go?</legend>
+        <div id="s-outcomes" class="outcomes" role="radiogroup"></div>
+      </fieldset>
+      <label class="check"><input type="checkbox" id="s-hints" /> Used hints / editorial / previous solution</label>
+      <div>
+        <label class="label" for="s-review">Next review</label>
+        <select id="s-review"></select>
+      </div>
+      <button id="s-finish" class="primary block" disabled>Finish session</button>
+      <div class="row-between">
+        <button id="s-abandon" class="ghost danger small">Abandon session</button>
+        <button id="s-history" class="ghost small">Full history ↗</button>
+      </div>
+    </section>
+    <footer id="sync" class="sync"></footer>
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>
