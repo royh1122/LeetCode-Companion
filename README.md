@@ -28,8 +28,8 @@ Third-party material is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.m
 ## Setup
 
 ```bash
-git clone <this repository's URL> leetcode-companion
-cd leetcode-companion
+git clone https://github.com/royh1122/LeetCode-Companion.git
+cd LeetCode-Companion
 npm install
 npm run db:migrate       # creates data/leetcode-companion.db (empty)
 ```
