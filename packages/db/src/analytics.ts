@@ -1,7 +1,9 @@
 import { asc, eq } from "drizzle-orm";
+import { weeklyNewTarget } from "@lcc/scheduler";
 import { addDays, effectiveDuration, isIndependentOutcome, isSuccessOutcome, startOfWeek, toLocalDate, type LocalDate } from "@lcc/shared";
 import type { Db } from "./client";
 import { getAppSettings } from "./meta";
+import { getActivePlan } from "./plans";
 import { getProblemStats } from "./problems";
 import { assignments, dailySnapshots, problems, reviewState, sessions, submissions } from "./schema";
 
@@ -46,6 +48,9 @@ export function getAnalytics(db: Db, opts: { groupBy?: "pattern" | "tag"; weeks?
 
   // Weekly adherence: completed vs assigned (new + mandatory) per week.
   const allAssign = db.select().from(assignments).all();
+  // Weekly new-question target (current plan's quotas, from its start week). Adherence alone
+  // can't show a missed day, because nothing was assigned for it; this can.
+  const plan = getActivePlan(db);
 
   const unique = {
     encountered: practiced.size,
@@ -83,6 +88,8 @@ export function getAnalytics(db: Db, opts: { groupBy?: "pattern" | "tag"; weeks?
     const activeMs = inWeek.reduce((a, s) => a + effectiveDuration(s, now).ms, 0);
     const assigned = allAssign.filter((a) => wk(a.scheduledDate) === w && a.scheduledDate < today && (a.type === "new" || a.type === "weekend_review") && !["skipped", "cancelled", "expired", "postponed"].includes(a.status));
     const done = assigned.filter((a) => a.status === "completed").length;
+    const newDone = allAssign.filter((a) => a.type === "new" && a.status === "completed" && wk(a.completedDate) === w).length;
+    const newTarget = plan && addDays(w, 6) >= plan.startDate ? weeklyNewTarget(plan.settings, w, plan.startDate) : null;
     const firstAcceptedDur = firsts
       .filter((s) => s.firstAcceptedAt)
       .map((s) => s.firstAcceptedAt! - s.startedAt - s.pausedMs)
@@ -98,6 +105,8 @@ export function getAnalytics(db: Db, opts: { groupBy?: "pattern" | "tag"; weeks?
       adherence: assigned.length ? done / assigned.length : null,
       assigned: assigned.length,
       completed: done,
+      newDone,
+      newTarget,
     };
   });
 

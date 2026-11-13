@@ -25,7 +25,7 @@ Business rules live in exactly one place. The extension imports URL and verdict 
 | `study_lists`, `study_list_problems` | Curated lists with their own ordering and group names (many-to-many). |
 | `study_plans` | Settings (JSON, validated by `planSettingsSchema`), start date, time zone, active/paused/archived. |
 | `plan_queue` | Ordered problems the plan introduces as new: pending / assigned / done / skipped as practiced / removed. |
-| `plan_skips`, `plan_days` | Skipped days; records that a day's allocation already ran (idempotency). |
+| `plan_skips`, `plan_light_days`, `plan_days` | Skipped days; light days (fewer new questions, no automatic reviews); records that a day's allocation already ran (idempotency). |
 | `assignments` | Planned tasks. Partial unique indexes: one *open* task per (problem, type); one weekend review per (problem, cohort week). |
 | `sessions` | Every attempt (UUID, which the extension can create offline): timing (started/ended, paused time, extension active time, manual override), reflection, reveals, recommended vs. chosen next review. Partial unique index: one open session per problem. |
 | `submissions` | Code versions + judge results. Unique on platform id; unique fingerprint fallback. `kind` = submit or run. `attribution` = bound / inferred / manual / none. |

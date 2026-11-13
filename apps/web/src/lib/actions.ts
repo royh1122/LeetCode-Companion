@@ -223,6 +223,12 @@ export async function postponeReviewAction(problemId: number, to: string) {
 export async function pullMoreReviewsAction(n: number) {
   return wrap(() => core.pullMoreReviews(db(), z.number().int().min(1).max(50).parse(n)));
 }
+export async function pullEarlyReviewsAction(n: number) {
+  return wrap(() => core.pullMoreReviews(db(), z.number().int().min(1).max(50).parse(n), Date.now(), { early: true }));
+}
+export async function doMoreTodayAction(n: number) {
+  return wrap(() => core.doMoreToday(db(), z.number().int().min(1).max(50).parse(n)));
+}
 
 // ---- Lists ----
 /** Import (or replace) a study list from pasted links, slugs or study-plan JSON. History is never touched. */
@@ -262,6 +268,15 @@ export async function setPlanPausedAction(planId: number, paused: boolean) {
 }
 export async function skipDayAction(planId: number, day: string, skip: boolean) {
   return wrap(() => (skip ? core.skipDay(db(), planId, date.parse(day)) : core.unskipDay(db(), planId, date.parse(day))));
+}
+const dayModeSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("normal") }),
+  z.object({ mode: z.literal("skip") }),
+  z.object({ mode: z.literal("light"), newQuota: z.number().int().min(0).max(50) }),
+]);
+/** Plan a future day: normal, skipped, or light (fewer new questions, no automatic reviews). */
+export async function setDayModeAction(planId: number, day: string, mode: unknown) {
+  return wrap(() => core.setDayMode(db(), z.number().int().parse(planId), date.parse(day), dayModeSchema.parse(mode)));
 }
 export async function moveQueueAction(planId: number, problemId: number, to: "top" | "up" | "down" | "bottom") {
   return wrap(() => core.moveQueueItem(db(), planId, problemId, to));

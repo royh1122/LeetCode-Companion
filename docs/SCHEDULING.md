@@ -18,8 +18,8 @@ The first time the dashboard is opened on a day, the scheduler runs these steps.
    - Each review day has a quota (default Sat 12, Sun "rest"). The target is cumulative, so if Saturday was missed, Sunday includes Saturday's share.
    - A problem gets at most one weekend review per cohort week (enforced by a unique index).
    - Unfinished mandatory reviews carry over until done, skipped or rescheduled.
-3. **New questions.** These are pulled from the top of the queue, `newPerWeekday[weekday]` of them, once per day (recorded in `plan_days`).
-   - **Backlog policy (default):** carried-over unfinished new questions reduce today's pull, so the open new list never exceeds one day's quota. Missed days don't create debt, and your queue position only moves when questions are actually assigned.
+3. **New questions.** These are pulled from the top of the queue once per day (recorded in `plan_days`). How many is set by the weekly target (below): at most the day's share, `newPerWeekday[weekday]` (less on a light day, none on a skipped day).
+   - **Backlog policy (default):** carried-over unfinished new questions, and new questions rescheduled onto today from an earlier day, take today's slots, so the open new list never exceeds one day's quota. Missed days don't create debt, and your queue position only moves when questions are actually assigned.
    - **Overlap policy (default `skip_practiced`):** a queue problem you already completed a session for (e.g. from an earlier list) is marked *skipped as practiced* instead of consuming quota. Use **Practice as new** on the Study plan page, or **Restart as new** on a question page, to opt in.
 4. **SRS reviews.** Problems whose next-review date is today or earlier, ranked by:
 
@@ -28,6 +28,22 @@ The first time the dashboard is opened on a day, the scheduler runs these steps.
    They are capped at `srsDailyCap` (default 5) or `srsReviewDayCap` on review days (default 3). The rest wait in the **Review queue**, where you can pull more into today. Excluded are:
    - problems with any open assignment, so a problem never has two tasks at once;
    - this week's cohort while a mandatory review day is still ahead, because the weekend review covers them.
+
+## Weekly target and working ahead
+
+- **Weekly target.** Each Monday–Sunday week has a target: the sum of `newPerWeekday`, counting only days from the plan's start. Skipped and light days don't lower it.
+- **Counting.** A new question counts toward the week of the date it was first scheduled (`originalDate`), whatever its status, except skipped or cancelled ones. So skipping a question leaves the week one short, and finishing a carried-over question later doesn't count twice.
+- **Daily pull.** `pull = max(0, min(share − carriedIn − ownToday, cumShare − assignedBefore − ownToday))`, where `share` is the day's share, `cumShare` is the sum of the shares from Monday through today, `assignedBefore` counts this week's new questions first scheduled before today, `ownToday` counts the ones already scheduled for today, and `carriedIn` counts open new questions from earlier days sitting on today (only under the default backlog policy). The second term is the week cap: questions done ahead use up the nearest upcoming days' shares first. The first term means a day is never pushed above its share, so a missed day never becomes debt.
+- **Do more today** (dashboard) takes the next questions from the queue into today, up to what is left of the weekly target. It first makes up shares missed earlier in the week; after that each extra question comes off the nearest upcoming study day that still has questions. It never takes from next week. Adding a specific problem "Today, as new" counts the same way.
+- **Weekend review.** Doing questions earlier in the week doesn't change how many there are, so the weekend review doesn't grow. Questions finished on Sunday get no weekend review (the cohort only holds questions finished *before* the review day); they get normal spaced-repetition reviews.
+- **Stats.** Analytics shows the weekly target (done / target) next to plan adherence, because adherence only counts what was assigned and can't show a missed day. Overdue counts aren't affected: they only depend on review due dates.
+
+## Busy days ahead
+
+- **Light day.** In the Study plan calendar, a future day can be made light: N new questions (0 up to one less than its quota) and no automatic spaced-repetition picks. Reviews due that day stay due and show as overdue the next day; nothing is postponed silently. You can still pull reviews from the Review queue.
+- **Skip a future day.** Same as skipping today: no new questions that day, and your place in the queue is kept.
+- **Not on review days.** Mandatory-review days can't be made light or skipped ahead of time, because their reviews would carry over onto Monday.
+- **Reviews early.** The Review queue can pull reviews due in the next 2 days into today. The next interval is computed from the day you actually do it. This week's new questions are left out while a review day is still ahead, because the weekend review covers them.
 
 ## Fixed weekend review vs. adaptive SRS
 
@@ -40,9 +56,9 @@ Both are kept and displayed in separate sections:
 
 ## Skip, pause, reschedule
 
-- **Skip today.** No new questions are pulled today. Today's not-yet-started new questions return to the queue at their original position. You can un-skip the same day.
+- **Skip today.** No new questions are pulled today (future days: see Busy days ahead). Today's not-yet-started new questions return to the queue at their original position. You can un-skip the same day.
 - **Pause plan.** Nothing is allocated automatically. The review backlog stays visible.
-- **Reschedule.** A new or mandatory task moves to the chosen date. An SRS task instead postpones the problem's next-review date. Postponements are kept until a later session supersedes them.
+- **Reschedule.** A new or mandatory task moves to the chosen date. A new question moved onto a day takes one of that day's slots instead of adding to it. An SRS task instead postpones the problem's next-review date. Postponements are kept until a later session supersedes them.
 - **Reorder queue.** Move items top, up, down or bottom; remove them; or add any problem by URL or slug, at the front or end, or to today as new.
 
 ## Spaced repetition

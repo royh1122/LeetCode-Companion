@@ -22,6 +22,7 @@ import { getProblemBySlug } from "./problems";
 import {
   assignments,
   planDays,
+  planLightDays,
   planQueue,
   planSkips,
   problemNoteRevisions,
@@ -50,6 +51,7 @@ export function exportAll(db: Db) {
   const plans = db.select().from(studyPlans).all();
   const queue = db.select().from(planQueue).all();
   const skips = db.select().from(planSkips).all();
+  const lightDays = db.select().from(planLightDays).all();
   const strip = <T extends { problemId: number }>(r: T) => {
     const { problemId, ...rest } = r;
     return { ...rest, problemSlug: slugOf.get(problemId)! };
@@ -74,6 +76,7 @@ export function exportAll(db: Db) {
       ...p,
       queue: queue.filter((q) => q.planId === p.id).map(({ id: _i, planId: _p, sourceListId, ...q }) => ({ ...strip(q), sourceList: lists.find((l) => l.id === sourceListId)?.slug ?? null })),
       skips: skips.filter((s) => s.planId === p.id).map((s) => s.date),
+      lightDays: lightDays.filter((l) => l.planId === p.id).map((l) => ({ date: l.date, newQuota: l.newQuota })),
     })),
     assignments: db.select().from(assignments).all().map(strip),
     sessions: db.select().from(sessions).all().map(strip),
@@ -229,6 +232,11 @@ export function importAll(db: Db, input: unknown): ImportReport {
             .run();
         }
         for (const d of (p.skips as string[]) ?? []) tx.insert(planSkips).values({ planId: row.id, date: d }).onConflictDoNothing().run();
+        for (const l of (p.lightDays as Array<{ date: string; newQuota: number }>) ?? []) {
+          if (isLocalDate(l?.date) && Number.isInteger(l.newQuota) && l.newQuota >= 0 && l.newQuota <= 50) {
+            tx.insert(planLightDays).values({ planId: row.id, date: l.date, newQuota: l.newQuota }).onConflictDoNothing().run();
+          }
+        }
         report.plans.inserted++;
       }
       for (const a of data.assignments as Array<Record<string, unknown>>) {

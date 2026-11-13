@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, inArray, max, ne, sql } from "drizzle-orm";
-import { DEFAULT_PLAN_SETTINGS, planSettingsSchema, startOfWeek, toLocalDate, type LocalDate, type PlanSettings } from "@lcc/shared";
+import { DEFAULT_PLAN_SETTINGS, planSettingsSchema, startOfWeek, toLocalDate, weekdayOf, type LocalDate, type PlanSettings } from "@lcc/shared";
 import type { Db } from "./client";
 import { bumpRevision, getAppSettings } from "./meta";
-import { assignments, planDays, planQueue, planSkips, problems, sessions, studyListProblems, studyLists, studyPlans, type StudyPlan } from "./schema";
+import { DomainError } from "./sessions";
+import { assignments, planDays, planLightDays, planQueue, planSkips, problems, sessions, studyListProblems, studyLists, studyPlans, type StudyPlan } from "./schema";
 
 export type ParsedPlan = Omit<StudyPlan, "settings"> & { settings: PlanSettings };
 
@@ -143,6 +144,38 @@ export function skipDay(db: Db, planId: number, date: LocalDate) {
         .set({ status: "pending", updatedAt: Date.now() })
         .where(and(eq(planQueue.planId, planId), eq(planQueue.problemId, a.problemId)))
         .run();
+    }
+    bumpRevision(tx);
+  });
+}
+
+export function getLightDays(db: Db, planId: number): Map<LocalDate, number> {
+  return new Map(db.select({ d: planLightDays.date, n: planLightDays.newQuota }).from(planLightDays).where(eq(planLightDays.planId, planId)).all().map((r) => [r.d, r.n]));
+}
+
+export type DayMode = { mode: "normal" } | { mode: "skip" } | { mode: "light"; newQuota: number };
+
+/**
+ * Plan around a busy day ahead: skip it, make it light (fewer new questions, no
+ * automatic reviews) or set it back to normal. Only future days, and never a
+ * mandatory review day (its reviews would just move onto Monday).
+ */
+export function setDayMode(db: Db, planId: number, date: LocalDate, mode: DayMode, now = Date.now()) {
+  const plan = getPlan(db, planId);
+  if (!plan) throw new Error("Plan not found");
+  const today = toLocalDate(now, getAppSettings(db).timeZone);
+  if (date <= today) throw new DomainError("past_day", "Only days after today can be planned ahead. Use Skip today for today.");
+  if (plan.settings.reviewDays.some((r) => r.weekday === weekdayOf(date))) throw new DomainError("review_day", "Review days can't be skipped or made light: their mandatory reviews would move onto Monday.");
+  db.transaction((tx) => {
+    tx.delete(planLightDays).where(and(eq(planLightDays.planId, planId), eq(planLightDays.date, date))).run();
+    if (mode.mode === "skip") {
+      skipDay(tx, planId, date);
+      return;
+    }
+    tx.delete(planSkips).where(and(eq(planSkips.planId, planId), eq(planSkips.date, date))).run();
+    if (mode.mode === "light") {
+      const n = Math.max(0, Math.min(50, Math.floor(mode.newQuota)));
+      tx.insert(planLightDays).values({ planId, date, newQuota: n }).run();
     }
     bumpRevision(tx);
   });

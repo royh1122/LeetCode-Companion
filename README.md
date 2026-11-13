@@ -184,6 +184,7 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
 **Verified by automated tests (unit/integration tests plus end-to-end flows):**
 - Weekly allocation (5×5 new, 12 + 13 weekend review); a skipped Saturday is caught up on Sunday.
 - Missed days and carry-over without runaway catch-up; skip-day keeps your place; paused plans; time-zone boundaries.
+- Weekly target: "Do more today" lightens the next study day (and makes up a missed day first), "Today, as new" counts the same way, rescheduled questions take a slot, light and skipped days ahead, reviews done up to 2 days early.
 - List import (links, slugs and study-plan JSON) and overlapping lists: there's one record per problem, and already-practiced overlaps don't consume new-question quota.
 - Duplicate-review prevention and SRS intervals and growth.
 - Session lifecycle; history is preserved across repeat attempts.

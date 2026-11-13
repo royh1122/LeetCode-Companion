@@ -1,5 +1,17 @@
-import { and, asc, eq, gte, inArray, isNotNull, lt, lte, max, ne, sql } from "drizzle-orm";
-import { forecast, isReviewDay, planDay, rankDueReviews, srsPriority, studyWeekNumber, type DueReview } from "@lcc/scheduler";
+import { and, asc, eq, gte, inArray, isNotNull, lt, lte, max, ne, notInArray, sql } from "drizzle-orm";
+import {
+  cumulativeNewShare,
+  forecast,
+  hasUpcomingReviewDay,
+  isReviewDay,
+  planDay,
+  rankDueReviews,
+  srsPriority,
+  studyWeekNumber,
+  weeklyNewTarget,
+  type DayAdjustments,
+  type DueReview,
+} from "@lcc/scheduler";
 import {
   addDays,
   diffDays,
@@ -11,7 +23,7 @@ import {
 } from "@lcc/shared";
 import type { Db } from "./client";
 import { bumpRevision, getAppSettings } from "./meta";
-import { getActivePlan, getSkipDates, pendingQueue, practicedProblemIds, type ParsedPlan } from "./plans";
+import { getActivePlan, getLightDays, getSkipDates, pendingQueue, practicedProblemIds, type ParsedPlan } from "./plans";
 import { emptyStats, getProblemStats } from "./problems";
 import { assignments, dailySnapshots, planDays, planQueue, planSkips, problems, reviewState, sessions, type Assignment, type Problem } from "./schema";
 import { DomainError, listOpenSessions } from "./sessions";
@@ -44,6 +56,38 @@ function dueReviewsAsOf(db: Db, today: LocalDate): DueReview[] {
       lastOutcome: r.lastOutcome,
       firstPracticedDate: r.firstPracticedDate,
     }));
+}
+
+/**
+ * This week's new questions for a plan, counted by the date each was first
+ * scheduled (`originalDate`). Skipped/cancelled ones don't count, so skipping a
+ * question leaves the week short until you do more.
+ */
+function weekNewCounts(db: Db, planId: number, today: LocalDate) {
+  const weekStart = startOfWeek(today);
+  const rows = db
+    .select({ d: assignments.originalDate })
+    .from(assignments)
+    .where(
+      and(
+        eq(assignments.planId, planId),
+        eq(assignments.type, "new"),
+        gte(assignments.originalDate, weekStart),
+        lte(assignments.originalDate, addDays(weekStart, 6)),
+        notInArray(assignments.status, ["skipped", "cancelled"]),
+      ),
+    )
+    .all();
+  return {
+    before: rows.filter((r) => r.d < today).length,
+    ownToday: rows.filter((r) => r.d === today).length,
+    throughToday: rows.filter((r) => r.d <= today).length,
+    week: rows.length,
+  };
+}
+
+function dayAdjustments(db: Db, plan: ParsedPlan): DayAdjustments {
+  return { startDate: plan.startDate, skipDates: getSkipDates(db, plan.id), lightDays: getLightDays(db, plan.id) };
 }
 
 /**
@@ -96,17 +140,21 @@ export function ensureSchedule(db: Db, now = Date.now()): { changed: boolean; to
       .orderBy(asc(assignments.completedAt))
       .all()
       .map((r) => ({ problemId: r.problemId, completedDate: r.completedDate! }));
+    const adj = dayAdjustments(tx, plan);
+    const counts = weekNewCounts(tx, plan.id, today);
     const result = planDay({
       today,
       plan: { status: plan.status as "active" | "paused" | "archived", startDate: plan.startDate, settings: plan.settings },
-      isSkipped: getSkipDates(tx, plan.id).has(today),
+      isSkipped: adj.skipDates!.has(today),
       allocated: { newQuestions: day?.newAllocatedAt != null, srs: day?.srsAllocatedAt != null },
       queue: pendingQueue(tx, plan.id),
       practicedProblemIds: practicedProblemIds(tx),
-      openAssignments: open.map((a) => ({ id: a.id, problemId: a.problemId, type: a.type, scheduledDate: a.scheduledDate, status: a.status })),
+      openAssignments: open.map((a) => ({ id: a.id, problemId: a.problemId, type: a.type, scheduledDate: a.scheduledDate, originalDate: a.originalDate, status: a.status })),
       weekReviewAssigned,
       cohort,
       dueReviews: dueReviewsAsOf(tx, today),
+      week: { cumShare: cumulativeNewShare(plan.settings, today, adj), assignedBefore: counts.before, ownToday: counts.ownToday },
+      lightNewQuota: adj.lightDays!.get(today) ?? null,
     });
 
     const ts = Date.now();
@@ -240,7 +288,8 @@ export function getTodayView(db: Db, now = Date.now()) {
     .from(assignments)
     .where(and(eq(assignments.type, "new"), eq(assignments.status, "completed"), gte(assignments.completedDate, weekStart), lte(assignments.completedDate, weekEnd)))
     .get()?.c ?? 0;
-  const weeklyNewQuota = plan ? plan.settings.newPerWeekday.reduce((a, b) => a + b, 0) : 0;
+  const weekNew = plan ? getWeekNewStatus(db, plan, today) : null;
+  const weeklyNewQuota = weekNew?.target ?? 0;
   const weekReviews = weekAssignments.filter((a) => a.type === "weekend_review" || a.type === "srs_review");
 
   const backlog = db
@@ -264,6 +313,8 @@ export function getTodayView(db: Db, now = Date.now()) {
     weekNumber: plan ? studyWeekNumber(plan.startDate, today) : null,
     isReviewDay: plan ? isReviewDay(plan.settings, today) : false,
     isSkipped,
+    lightDay: plan ? (getLightDays(db, plan.id).get(today) ?? null) : null,
+    weekNew,
     notStartedYet: plan ? today < plan.startDate : false,
     sections,
     progress: {
@@ -404,8 +455,19 @@ export function getReviewQueue(db: Db, now = Date.now()) {
       stats: stats.get(d.problemId) ?? emptyStats(),
       openAssignment: openAssign.get(d.problemId) ?? null,
     }));
+  // Reviews that may be done early: due within EARLY_REVIEW_DAYS, not on a list yet, and not
+  // waiting for this week's mandatory review (that review covers them).
+  const plan = getActivePlan(db);
+  const weekStart = startOfWeek(today);
+  const cohortWaits = plan ? hasUpcomingReviewDay(plan.settings, today) : false;
+  const early = due
+    .filter((d) => d.nextDueDate > today && d.nextDueDate <= addDays(today, EARLY_REVIEW_DAYS))
+    .filter((d) => !openAssign.has(d.problemId))
+    .filter((d) => !(cohortWaits && d.firstPracticedDate && d.firstPracticedDate >= weekStart))
+    .sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate) || srsPriority(b, today) - srsPriority(a, today) || a.problemId - b.problemId);
   return {
     today,
+    earlyAvailable: early.map((d) => d.problemId),
     dueNow: rank(due.filter((d) => d.nextDueDate <= today)),
     upcoming: due
       .filter((d) => d.nextDueDate > today)
@@ -414,21 +476,140 @@ export function getReviewQueue(db: Db, now = Date.now()) {
   };
 }
 
-/** Pull extra SRS reviews into today beyond the daily cap. */
-export function pullMoreReviews(db: Db, n: number, now = Date.now()) {
+/** How far ahead a review may be done early. Small, so spacing isn't defeated. */
+export const EARLY_REVIEW_DAYS = 2;
+
+/**
+ * Pull extra SRS reviews into today beyond the daily cap. `early` pulls reviews
+ * due within the next EARLY_REVIEW_DAYS days instead of ones already due; the next
+ * interval is then counted from the day you actually do it.
+ */
+export function pullMoreReviews(db: Db, n: number, now = Date.now(), opts: { early?: boolean } = {}) {
   const q = getReviewQueue(db, now);
   const plan = getActivePlan(db);
-  const picks = q.dueNow.filter((r) => !r.openAssignment).slice(0, Math.max(0, n));
+  const picks = (opts.early ? q.earlyAvailable : q.dueNow.filter((r) => !r.openAssignment).map((r) => r.problem.id)).slice(0, Math.max(0, n));
   db.transaction((tx) => {
     let pos = nextPosition(tx, q.today, "srs_review");
-    for (const p of picks) {
+    for (const pid of picks) {
       tx.insert(assignments)
-        .values({ planId: plan?.id ?? null, problemId: p.problem.id, type: "srs_review", scheduledDate: q.today, originalDate: q.today, position: pos++, note: "Pulled from backlog" })
+        .values({ planId: plan?.id ?? null, problemId: pid, type: "srs_review", scheduledDate: q.today, originalDate: q.today, position: pos++, note: opts.early ? "Done early" : "Pulled from backlog" })
         .run();
     }
     bumpRevision(tx);
   });
   return picks.length;
+}
+
+/** Projection of the `days` days after today (same rules as the daily allocation). */
+function projectDays(db: Db, plan: ParsedPlan, today: LocalDate, days: number) {
+  if (plan.status !== "active" || days <= 0) return [];
+  const weekStart = startOfWeek(today);
+  const cohortSoFar =
+    db
+      .select({ c: sql<number>`count(*)` })
+      .from(assignments)
+      .where(and(eq(assignments.type, "new"), gte(assignments.scheduledDate, weekStart), ne(assignments.status, "skipped"), ne(assignments.status, "cancelled")))
+      .get()?.c ?? 0;
+  const reviewsAssigned =
+    db
+      .select({ c: sql<number>`count(*)` })
+      .from(assignments)
+      .where(and(eq(assignments.type, "weekend_review"), eq(assignments.cohortWeek, weekStart)))
+      .get()?.c ?? 0;
+  const practiced = practicedProblemIds(db);
+  const pending = pendingQueue(db, plan.id);
+  const effectiveQueue = (plan.settings.overlapPolicy === "skip_practiced" ? pending.filter((q) => q.force || !practiced.has(q.problemId)) : pending).map((q) => q.problemId);
+  // New questions already placed on future days: added for that day, or moved there from an earlier one.
+  const persisted = new Map<LocalDate, { own: number; inbound: number }>();
+  for (const a of db
+    .select({ s: assignments.scheduledDate, o: assignments.originalDate })
+    .from(assignments)
+    .where(and(eq(assignments.type, "new"), gte(assignments.scheduledDate, addDays(today, 1)), inArray(assignments.status, ["pending", "in_progress"])))
+    .all()) {
+    const p = persisted.get(a.s) ?? { own: 0, inbound: 0 };
+    if (a.o < a.s) p.inbound++;
+    else p.own++;
+    persisted.set(a.s, p);
+  }
+  const startFrom = addDays(today, 1);
+  const newWeek = weekdayOf(startFrom) === 1;
+  const adj = dayAdjustments(db, plan);
+  return forecast({
+    from: startFrom,
+    days,
+    settings: plan.settings,
+    queue: effectiveQueue,
+    skipDates: adj.skipDates!,
+    lightDays: adj.lightDays,
+    startDate: plan.startDate,
+    cohortSoFar: newWeek ? 0 : cohortSoFar,
+    reviewsAssignedThisWeek: newWeek ? 0 : reviewsAssigned,
+    weekAssignedBefore: newWeek ? 0 : weekNewCounts(db, plan.id, today).throughToday,
+    persisted,
+  });
+}
+
+/**
+ * This week's new-question target and how much of it is used.
+ * - `behind`: shares of earlier days (and today) never assigned, e.g. a missed day.
+ *   "Do more today" makes these up first, so it doesn't lighten any later day.
+ * - `lightens`: the upcoming day "Do more today" takes from once nothing is behind
+ *   (null = no later day this week has questions left).
+ */
+export function getWeekNewStatus(db: Db, plan: ParsedPlan, today: LocalDate) {
+  const target = weeklyNewTarget(plan.settings, today, plan.startDate);
+  const counts = weekNewCounts(db, plan.id, today);
+  const behind = Math.max(0, cumulativeNewShare(plan.settings, today, dayAdjustments(db, plan)) - counts.throughToday);
+  const daysLeft = 6 - ((weekdayOf(today) + 6) % 7);
+  const lightens = projectDays(db, plan, today, daysLeft).find((d) => d.newProblemIds.length > 0)?.date ?? null;
+  return { target, assigned: counts.week, remaining: Math.max(0, target - counts.week), behind, lightens };
+}
+
+/**
+ * "Do more today": take the next `n` questions from the queue into today. They
+ * count toward this week's target, so the nearest upcoming study days get lighter
+ * (never past Sunday). Refused once the week's target is reached.
+ */
+export function doMoreToday(db: Db, n: number, now = Date.now()) {
+  const plan = getActivePlan(db);
+  if (!plan || plan.status !== "active") throw new DomainError("no_plan", "No active plan");
+  const today = todayFor(db, now);
+  if (today < plan.startDate) throw new DomainError("not_started", "Your plan hasn't started yet");
+  ensureSchedule(db, now);
+  return db.transaction((tx) => {
+    const { remaining } = getWeekNewStatus(tx, plan, today);
+    if (remaining <= 0) throw new DomainError("target_reached", "This week's target is reached");
+    const want = Math.min(Math.max(0, Math.floor(n)), remaining);
+    const open = new Set(
+      tx
+        .select({ pid: assignments.problemId })
+        .from(assignments)
+        .where(inArray(assignments.status, ["pending", "in_progress"]))
+        .all()
+        .map((r) => r.pid),
+    );
+    const practiced = practicedProblemIds(tx);
+    const picks: number[] = [];
+    const ts = Date.now();
+    for (const q of pendingQueue(tx, plan.id)) {
+      if (picks.length >= want) break;
+      if (open.has(q.problemId)) continue;
+      if (!q.force && plan.settings.overlapPolicy === "skip_practiced" && practiced.has(q.problemId)) {
+        tx.update(planQueue).set({ status: "skipped_practiced", updatedAt: ts }).where(and(eq(planQueue.planId, plan.id), eq(planQueue.problemId, q.problemId))).run();
+        continue;
+      }
+      picks.push(q.problemId);
+    }
+    let pos = nextPosition(tx, today, "new");
+    for (const pid of picks) {
+      tx.insert(assignments)
+        .values({ planId: plan.id, problemId: pid, type: "new", scheduledDate: today, originalDate: today, cohortWeek: startOfWeek(today), position: pos++, note: "Worked ahead" })
+        .run();
+      tx.update(planQueue).set({ status: "assigned", updatedAt: ts }).where(and(eq(planQueue.planId, plan.id), eq(planQueue.problemId, pid))).run();
+    }
+    bumpRevision(tx);
+    return picks.length;
+  });
 }
 
 /** Upcoming days: persisted future assignments + a projection from the queue. */
@@ -444,37 +625,7 @@ export function getUpcoming(db: Db, days = 14, now = Date.now()) {
     .orderBy(asc(assignments.scheduledDate))
     .all();
   if (!plan) return { today, days: [], future };
-  const weekStart = startOfWeek(today);
-  const cohortSoFar =
-    db
-      .select({ c: sql<number>`count(*)` })
-      .from(assignments)
-      .where(and(eq(assignments.type, "new"), gte(assignments.scheduledDate, weekStart), ne(assignments.status, "skipped"), ne(assignments.status, "cancelled")))
-      .get()?.c ?? 0;
-  const reviewsAssigned =
-    db
-      .select({ c: sql<number>`count(*)` })
-      .from(assignments)
-      .where(and(eq(assignments.type, "weekend_review"), eq(assignments.cohortWeek, weekStart)))
-      .get()?.c ?? 0;
-  const queue = pendingQueue(db, plan.id).map((q) => q.problemId);
-  const practiced = practicedProblemIds(db);
-  const effectiveQueue =
-    plan.settings.overlapPolicy === "skip_practiced"
-      ? pendingQueue(db, plan.id)
-          .filter((q) => q.force || !practiced.has(q.problemId))
-          .map((q) => q.problemId)
-      : queue;
-  const startFrom = addDays(today, 1);
-  const fc = plan.status === "active" ? forecast({
-    from: startFrom,
-    days,
-    settings: plan.settings,
-    queue: effectiveQueue,
-    skipDates: getSkipDates(db, plan.id),
-    cohortSoFar: weekdayOf(startFrom) === 1 ? 0 : cohortSoFar,
-    reviewsAssignedThisWeek: weekdayOf(startFrom) === 1 ? 0 : reviewsAssigned,
-  }) : [];
+  const fc = projectDays(db, plan, today, days);
   const ids = [...new Set(fc.flatMap((d) => d.newProblemIds))];
   const probs = new Map(
     db
@@ -495,6 +646,9 @@ export function getUpcoming(db: Db, days = 14, now = Date.now()) {
       ...d,
       newProblems: d.newProblemIds.map((id) => probs.get(id)!).filter(Boolean),
       srsDue: dueByDate.get(d.date) ?? 0,
+      reviewDay: isReviewDay(plan.settings, d.date),
+      /** The day's normal new-question quota (light/skip only make sense when it's above 0). */
+      quota: plan.settings.newPerWeekday[weekdayOf(d.date)] ?? 0,
     })),
   };
 }

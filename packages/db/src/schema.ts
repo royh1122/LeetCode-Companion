@@ -119,6 +119,20 @@ export const planSkips = sqliteTable(
   (t) => [primaryKey({ columns: [t.planId, t.date] })],
 );
 
+/** Days the user marked as light: fewer new questions and no automatic SRS picks (reviews stay due). */
+export const planLightDays = sqliteTable(
+  "plan_light_days",
+  {
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => studyPlans.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    newQuota: integer("new_quota").notNull().default(1),
+    ...timestamps,
+  },
+  (t) => [primaryKey({ columns: [t.planId, t.date] })],
+);
+
 /** Records that a day's automatic allocation already ran, so it never runs twice. */
 export const planDays = sqliteTable(
   "plan_days",

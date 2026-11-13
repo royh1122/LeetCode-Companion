@@ -44,6 +44,10 @@ import {
   saveNotes,
   getNotes,
   listNoteRevisions,
+  doMoreToday,
+  setDayMode,
+  getLightDays,
+  pullMoreReviews,
 } from "../src";
 import { at, freshDb, TZ } from "./helpers";
 
@@ -260,6 +264,207 @@ describe("study plan — a full week", () => {
     expect(getTodayView(db, at(MON, 9)).sections.newQuestions.some((i) => i.problem.id === extra.id)).toBe(true);
     const up = getUpcoming(db, 7, at(MON, 9));
     expect(up.days[0]!.newProblems.length).toBeGreaterThan(0);
+  });
+});
+
+describe("flexible weekly plan", () => {
+  const TUE = addDays(MON, 1);
+  const WED = addDays(MON, 2);
+  const THU = addDays(MON, 3);
+  const FRI = addDays(MON, 4);
+  const SAT = addDays(MON, 5);
+  const SUN = addDays(MON, 6);
+  type Db = ReturnType<typeof freshDb>;
+  const open = (v: ReturnType<typeof getTodayView>) => v.sections.newQuestions.filter((i) => i.assignment.status !== "completed");
+  function solveAt(db: Db, items: { assignment: { id: number }; problem: { id: number } }[], date: string, hour: number, outcome: Outcome = "independent") {
+    let minute = 0;
+    for (const it of items) {
+      const { session } = startSession(db, { problemId: it.problem.id, assignmentId: it.assignment.id, origin: "dashboard", startedAt: at(date, hour, minute) }, at(date, hour, minute));
+      finishSession(db, session.id, { outcome, hintsUsed: false }, at(date, hour, minute + 4));
+      minute += 5;
+    }
+  }
+
+  it("the agreed example: Tue +3 → Wed 2; Wed +1 → Thu 4; Fri 5; week stays 25 and so does the weekend review", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const seen: number[] = [];
+    const day = (date: string, expectNew: number, more = 0) => {
+      let v = getTodayView(db, at(date, 8));
+      expect(open(v)).toHaveLength(expectNew);
+      expect(open(v).every((i) => !i.carriedOver)).toBe(true);
+      seen.push(...open(v).map((i) => i.problem.id));
+      solveAt(db, open(v), date, 9);
+      if (more) {
+        expect(doMoreToday(db, more, at(date, 12))).toBe(more);
+        v = getTodayView(db, at(date, 12));
+        expect(open(v)).toHaveLength(more);
+        seen.push(...open(v).map((i) => i.problem.id));
+        solveAt(db, open(v), date, 13);
+      }
+      // Re-opening the dashboard later the same day never adds more.
+      expect(open(getTodayView(db, at(date, 20)))).toHaveLength(0);
+    };
+    day(MON, 5);
+    expect(getTodayView(db, at(TUE, 8)).weekNew).toMatchObject({ target: 25, assigned: 10, remaining: 15, lightens: WED });
+    day(TUE, 5, 3);
+    // The calendar shows the lighter Wednesday right away.
+    const up = getUpcoming(db, 4, at(TUE, 14));
+    expect(up.days.map((d) => d.newProblems.length)).toEqual([2, 5, 5, 0]);
+    day(WED, 2, 1);
+    expect(getUpcoming(db, 2, at(WED, 14)).days[0]!.newProblems).toHaveLength(4);
+    day(THU, 4);
+    day(FRI, 5);
+    expect(new Set(seen).size).toBe(25);
+    const fri = getTodayView(db, at(FRI, 21));
+    expect(fri.weekNew).toMatchObject({ target: 25, assigned: 25, remaining: 0, lightens: null });
+    expect(fri.progress).toMatchObject({ weekNewDone: 25, weeklyNewQuota: 25 });
+    expect(() => doMoreToday(db, 1, at(FRI, 21))).toThrow(/target is reached/);
+    const sat = getTodayView(db, at(SAT, 9));
+    expect(sat.sections.mandatory).toHaveLength(12);
+    solveAt(db, sat.sections.mandatory, SAT, 9, "easy");
+    const sun = getTodayView(db, at(SUN, 9));
+    expect(sun.sections.mandatory).toHaveLength(13);
+    expect(new Set([...sat.sections.mandatory, ...sun.sections.mandatory].map((i) => i.problem.id))).toEqual(new Set(seen));
+    solveAt(db, sun.sections.mandatory, SUN, 9);
+    // Next week starts fresh at its own target.
+    const nextMon = getTodayView(db, at(addDays(MON, 7), 9));
+    expect(open(nextMon)).toHaveLength(5);
+    expect(nextMon.weekNew).toMatchObject({ target: 25, assigned: 5 });
+    // Analytics: weekly target X/Y next to adherence.
+    const week = getAnalytics(db, { weeks: 2 }, at(addDays(MON, 7), 9)).weekly[0]!;
+    expect(week).toMatchObject({ week: MON, newDone: 25, newTarget: 25, adherence: 1 });
+  });
+
+  it("doing more than the next day's share empties the nearest days first; Do more is capped at the week", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    solveAt(db, open(getTodayView(db, at(MON, 8))), MON, 9);
+    // Ask for 30 on Monday: capped at the 20 left this week.
+    expect(doMoreToday(db, 30, at(MON, 12))).toBe(20);
+    expect(getUpcoming(db, 6, at(MON, 13)).days.every((d) => d.newProblems.length === 0)).toBe(true);
+    expect(open(getTodayView(db, at(TUE, 8))).filter((i) => !i.carriedOver)).toHaveLength(0);
+  });
+
+  it("missed days stay forgiving: no debt, and Do more can catch up later in the week", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    solveAt(db, open(getTodayView(db, at(MON, 8))), MON, 9);
+    // Tuesday never opened. Wednesday is still a normal 5.
+    const wed = getTodayView(db, at(WED, 8));
+    expect(open(wed)).toHaveLength(5);
+    expect(wed.weekNew).toMatchObject({ assigned: 10, remaining: 15, behind: 5 });
+    solveAt(db, open(wed), WED, 9);
+    // Catching up Tuesday's 5 on Wednesday makes up the missed share: Thursday and Friday stay at 5.
+    expect(doMoreToday(db, 5, at(WED, 12))).toBe(5);
+    expect(getUpcoming(db, 2, at(WED, 13)).days.map((d) => d.newProblems.length)).toEqual([5, 5]);
+    expect(getTodayView(db, at(WED, 13)).weekNew).toMatchObject({ behind: 0, lightens: THU });
+    // Doing more after that works ahead: it comes off Thursday.
+    expect(doMoreToday(db, 2, at(WED, 14))).toBe(2);
+    expect(getUpcoming(db, 2, at(WED, 15)).days.map((d) => d.newProblems.length)).toEqual([3, 5]);
+    // The week can still reach its full target.
+    expect(getTodayView(db, at(WED, 15)).weekNew).toMatchObject({ assigned: 17, remaining: 8 });
+  });
+
+  it("'Today, as new' counts toward the week and lightens the next day", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    solveAt(db, open(getTodayView(db, at(MON, 8))), MON, 9);
+    const tue = getTodayView(db, at(TUE, 8));
+    expect(open(tue)).toHaveLength(5);
+    const next = pendingQueue(db, plan.id)[0]!.problemId;
+    addAssignment(db, next, TUE, { asNew: true });
+    expect(getTodayView(db, at(TUE, 9)).weekNew).toMatchObject({ assigned: 11, remaining: 14 });
+    solveAt(db, open(getTodayView(db, at(TUE, 9))), TUE, 10);
+    expect(open(getTodayView(db, at(WED, 8)))).toHaveLength(4);
+  });
+
+  it("skipping a question leaves the week short instead of adding to tomorrow", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const mon = getTodayView(db, at(MON, 8));
+    skipAssignment(db, open(mon)[0]!.assignment.id);
+    solveAt(db, open(getTodayView(db, at(MON, 9))), MON, 9);
+    const tue = getTodayView(db, at(TUE, 8));
+    expect(open(tue)).toHaveLength(5);
+    expect(tue.weekNew).toMatchObject({ assigned: 9, remaining: 16 });
+  });
+
+  it("a question rescheduled into a day takes one of that day's slots", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const mon = getTodayView(db, at(MON, 8));
+    const moved = open(mon)[0]!;
+    rescheduleAssignment(db, moved.assignment.id, WED, at(MON, 9));
+    solveAt(db, open(getTodayView(db, at(MON, 9))), MON, 9);
+    solveAt(db, open(getTodayView(db, at(TUE, 8))), TUE, 9);
+    // The forecast already shows Wednesday at 4 new + the moved one.
+    expect(getUpcoming(db, 1, at(TUE, 12)).days[0]!.newProblems).toHaveLength(4);
+    const wed = getTodayView(db, at(WED, 8));
+    expect(open(wed)).toHaveLength(5);
+    expect(open(wed).map((i) => i.problem.id)).toContain(moved.problem.id);
+  });
+
+  it("light and skipped days ahead: fewer new questions, reviews stay due (honest overdue); not on review days", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    // A review that falls due on Wednesday (7 days after an independent solve).
+    const q = getQueue(db, plan.id);
+    const reviewPid = q[q.length - 1]!.problemId;
+    logManualAttempt(db, { problemId: reviewPid, date: addDays(MON, -5), outcome: "independent" });
+    solveAt(db, open(getTodayView(db, at(MON, 8))), MON, 9);
+    setDayMode(db, plan.id, WED, { mode: "light", newQuota: 1 }, at(MON, 10));
+    setDayMode(db, plan.id, THU, { mode: "skip" }, at(MON, 10));
+    expect(() => setDayMode(db, plan.id, SAT, { mode: "skip" }, at(MON, 10))).toThrow(/Review days/);
+    expect(() => setDayMode(db, plan.id, MON, { mode: "light", newQuota: 1 }, at(MON, 10))).toThrow(/after today/);
+    const up = getUpcoming(db, 4, at(MON, 10));
+    expect(up.days.map((d) => [d.newProblems.length, d.lightNew, d.skipped])).toEqual([
+      [5, null, false],
+      [1, 1, false],
+      [0, null, true],
+      [5, null, false],
+    ]);
+    solveAt(db, open(getTodayView(db, at(TUE, 8))), TUE, 9);
+    const wed = getTodayView(db, at(WED, 8));
+    expect(wed.lightDay).toBe(1);
+    expect(open(wed)).toHaveLength(1);
+    expect(wed.sections.srs).toHaveLength(0);
+    expect(wed.backlog).toMatchObject({ due: 1, overdue: 0 });
+    solveAt(db, open(wed), WED, 9);
+    const thu = getTodayView(db, at(THU, 8));
+    expect(thu.isSkipped).toBe(true);
+    expect(open(thu)).toHaveLength(0);
+    expect(thu.sections.srs.map((i) => i.problem.id)).toEqual([reviewPid]);
+    expect(thu.backlog.overdue).toBe(1);
+    expect(open(getTodayView(db, at(FRI, 8)))).toHaveLength(5);
+    // Light days survive export / import, and can be set back to normal.
+    const nextTue = addDays(MON, 8);
+    setDayMode(db, plan.id, nextTue, { mode: "light", newQuota: 2 }, at(FRI, 9));
+    const data = JSON.parse(JSON.stringify(exportAll(db)));
+    const target = freshDb({ seed: false });
+    importAll(target, data);
+    expect([...getLightDays(target, getActivePlan(target)!.id)]).toContainEqual([nextTue, 2]);
+    setDayMode(db, plan.id, nextTue, { mode: "normal" }, at(FRI, 9));
+    expect(getLightDays(db, plan.id).has(nextTue)).toBe(false);
+  });
+
+  it("reviews can be done up to 2 days early; this week's new questions wait for the weekend review", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const q = getQueue(db, plan.id);
+    const inTwo = q[q.length - 1]!.problemId;
+    const inThree = q[q.length - 2]!.problemId;
+    logManualAttempt(db, { problemId: inTwo, date: addDays(MON, -5), outcome: "independent" });
+    logManualAttempt(db, { problemId: inThree, date: addDays(MON, -4), outcome: "independent" });
+    solveAt(db, open(getTodayView(db, at(MON, 8))), MON, 9, "failed"); // due tomorrow, but in this week's cohort
+    expect(getReviewQueue(db, at(MON, 10)).earlyAvailable).toEqual([inTwo]);
+    expect(pullMoreReviews(db, 5, at(MON, 10), { early: true })).toBe(1);
+    const early = getTodayView(db, at(MON, 10)).sections.srs.find((i) => i.problem.id === inTwo)!;
+    expect(early.assignment.note).toBe("Done early");
+    solveAt(db, [early], MON, 11);
+    // The next interval counts from the day it was actually done: 7 × 2 = 14 days from Monday.
+    expect(getProblemDetail(db, early.problem.slug, at(MON, 12))!.reviewState!.nextDueDate).toBe(addDays(MON, 14));
+    expect(getReviewQueue(db, at(MON, 12)).earlyAvailable).toEqual([]);
   });
 });
 

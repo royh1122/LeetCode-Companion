@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MASTERY_SETTINGS, DEFAULT_PLAN_SETTINGS, DEFAULT_SRS_SETTINGS, addDays, weekdayOf, type PlanSettings } from "@lcc/shared";
-import { computeMastery, computeNextReview, forecast, planDay, rankDueReviews, weekendReviewTarget, type PlanDayInput } from "../src";
+import { computeMastery, computeNextReview, cumulativeNewShare, dayNewShare, forecast, newQuestionPull, planDay, rankDueReviews, weekendReviewTarget, weeklyNewTarget, type PlanDayInput } from "../src";
 
 const MON = "2026-11-09";
 
@@ -194,5 +194,89 @@ describe("forecast", () => {
     expect(fc[5]!.mandatoryReviews).toBe(12);
     expect(fc[6]!.mandatoryReviews).toBe(8);
     expect(fc[7]!.newProblemIds).toEqual([20, 21, 22, 23, 24]);
+  });
+});
+
+describe("weekly target", () => {
+  const S = DEFAULT_PLAN_SETTINGS;
+  const pull = (o: Partial<Parameters<typeof newQuestionPull>[0]>) =>
+    newQuestionPull({ share: 5, cumShare: 5, weekAssignedBefore: 0, ownToday: 0, carriedIn: 0, carryOverReducesNew: true, ...o });
+
+  it("the weekly target is the sum of the quotas, from the plan start; skips and light days don't lower it", () => {
+    expect(weeklyNewTarget(S, addDays(MON, 3))).toBe(25);
+    expect(weeklyNewTarget(S, addDays(MON, 3), addDays(MON, 2))).toBe(15);
+    expect(dayNewShare(S, addDays(MON, 2), { skipDates: new Set([addDays(MON, 2)]) })).toBe(0);
+    expect(dayNewShare(S, addDays(MON, 2), { lightDays: new Map([[addDays(MON, 2), 1]]) })).toBe(1);
+    expect(dayNewShare(S, addDays(MON, 2), { lightDays: new Map([[addDays(MON, 2), 9]]) })).toBe(5);
+    expect(cumulativeNewShare(S, addDays(MON, 2), { lightDays: new Map([[addDays(MON, 2), 1]]) })).toBe(11);
+  });
+
+  it("the user's example: Tue +3 makes Wed 2; Wed +1 makes Thu 4; Fri stays 5; week totals 25", () => {
+    // Mon 5, Tue 5 + 3 more = 13 assigned before Wednesday.
+    expect(pull({ cumShare: 15, weekAssignedBefore: 13 })).toBe(2);
+    // Wed 2 + 1 more → 16 before Thursday.
+    expect(pull({ cumShare: 20, weekAssignedBefore: 16 })).toBe(4);
+    expect(pull({ cumShare: 25, weekAssignedBefore: 20 })).toBe(5);
+  });
+
+  it("working far ahead empties the nearest days first, never past Sunday", () => {
+    // Tue 5 + 7 more → Wed 0, Thu 3, Fri 5.
+    expect(pull({ cumShare: 15, weekAssignedBefore: 17 })).toBe(0);
+    expect(pull({ cumShare: 20, weekAssignedBefore: 17 })).toBe(3);
+    expect(pull({ cumShare: 25, weekAssignedBefore: 20 })).toBe(5);
+  });
+
+  it("a missed day is never turned into debt: a day never pulls above its share", () => {
+    // Mon 5, Tue missed (0). Wednesday still pulls just 5.
+    expect(pull({ cumShare: 15, weekAssignedBefore: 5 })).toBe(5);
+  });
+
+  it("carried-over and rescheduled-in questions take the day's slots; 'add' policy ignores them", () => {
+    expect(pull({ cumShare: 20, weekAssignedBefore: 15, carriedIn: 3 })).toBe(2);
+    expect(pull({ cumShare: 20, weekAssignedBefore: 15, carriedIn: 3, carryOverReducesNew: false })).toBe(5);
+    expect(pull({ cumShare: 20, weekAssignedBefore: 15, ownToday: 1 })).toBe(4);
+  });
+
+  it("planDay: without week info it behaves exactly as before", () => {
+    expect(planDay(input()).createNew).toEqual([1, 2, 3, 4, 5]);
+    expect(planDay(input({ week: { cumShare: 10, assignedBefore: 8, ownToday: 0 }, today: addDays(MON, 1) })).createNew).toEqual([1, 2]);
+  });
+
+  it("planDay: a question rescheduled into today takes one of today's slots", () => {
+    const wed = addDays(MON, 2);
+    const open = [{ id: 1, problemId: 99, type: "new" as const, scheduledDate: wed, originalDate: MON, status: "pending" as const }];
+    expect(planDay(input({ today: wed, openAssignments: open, week: { cumShare: 15, assignedBefore: 10, ownToday: 0 } })).createNew).toHaveLength(4);
+  });
+
+  it("planDay: a light day pulls its light count and picks no SRS reviews (they stay due)", () => {
+    const due = [{ problemId: 100, nextDueDate: addDays(MON, -2), intervalDays: 7, lapses: 0, lastOutcome: "independent" as const, firstPracticedDate: "2026-10-01" }];
+    const r = planDay(input({ lightNewQuota: 1, dueReviews: due }));
+    expect(r.createNew).toEqual([1]);
+    expect(r.createSrs).toEqual([]);
+    expect(r.markAllocated.srs).toBe(true);
+  });
+
+  it("forecast: work done ahead lightens the next day; light and skipped days show", () => {
+    const tue = addDays(MON, 1);
+    const fc = forecast({
+      from: addDays(MON, 2),
+      days: 6,
+      settings: S,
+      queue: Array.from({ length: 60 }, (_, i) => i),
+      skipDates: new Set([addDays(MON, 4)]),
+      lightDays: new Map([[addDays(MON, 3), 1]]),
+      startDate: MON,
+      cohortSoFar: 13,
+      reviewsAssignedThisWeek: 0,
+      weekAssignedBefore: 13, // Mon 5 + Tue 8
+      persisted: new Map(),
+    });
+    expect(tue < fc[0]!.date).toBe(true);
+    expect(fc.map((d) => d.newProblemIds.length)).toEqual([2, 1, 0, 0, 0, 5]);
+    expect(fc[1]!.lightNew).toBe(1);
+    expect(fc[2]!.skipped).toBe(true);
+    // Weekend review covers 13 + 2 + 1 = 16 (Sat 12, Sun the rest).
+    expect(fc[3]!.mandatoryReviews).toBe(12);
+    expect(fc[4]!.mandatoryReviews).toBe(4);
   });
 });

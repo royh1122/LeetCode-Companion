@@ -1,15 +1,17 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Pause, Play, Plus, Trash2, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, CalendarOff, FastForward, Pause, Play, Plus, Trash2, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { WEEKDAY_SHORT, type PlanSettings } from "@lcc/shared";
+import { WEEKDAY_SHORT, weekdayOf, type PlanSettings } from "@lcc/shared";
 import {
   addProblemBySlug,
   addToDayAction,
+  doMoreTodayAction,
   enqueueAction,
   moveQueueAction,
   removeFromQueueAction,
+  setDayModeAction,
   setPlanPausedAction,
   skipDayAction,
   updatePlanAction,
@@ -40,6 +42,83 @@ export function SkipTodayButton({ planId, today, skipped }: { planId: number; to
         {skipped ? <Undo2 /> : null}
         {skipped ? "Un-skip today" : "Skip today (keep my place)"}
       </Button>
+    </span>
+  );
+}
+
+/**
+ * "Do more today": pull the next questions from the queue. They count toward this
+ * week's target, so a missed day is made up first, then the nearest upcoming day gets lighter.
+ */
+export function DoMoreToday({ remaining, behind, lightens }: { remaining: number; behind: number; lightens: string | null }) {
+  const { pending, run, error } = useAction();
+  const [n, setN] = useState(1);
+  if (remaining <= 0) return <span className="text-xs text-muted">This week&apos;s target is reached.</span>;
+  const max = Math.min(remaining, 10);
+  const count = Math.min(n, max);
+  const made = Math.min(count, behind);
+  const ahead = count - made;
+  const hint = [
+    made ? `makes up ${made} missed this week` : null,
+    ahead ? (lightens ? `takes ${ahead} from ${WEEKDAY_SHORT[weekdayOf(lightens)]} onward` : `${ahead} toward this week's target`) : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    <span className="flex flex-wrap items-center justify-end gap-2">
+      <span className="text-xs text-subtle" title="Counts toward this week's target. Never takes from next week.">
+        {remaining} left this week · {hint}
+      </span>
+      <Select aria-label="How many more" className="h-7 w-14 px-1.5 text-xs" value={count} onChange={(e) => setN(Number(e.target.value))}>
+        {Array.from({ length: max }, (_, i) => i + 1).map((k) => (
+          <option key={k} value={k}>
+            {k}
+          </option>
+        ))}
+      </Select>
+      <Button size="sm" disabled={pending} onClick={() => run(() => doMoreTodayAction(count))}>
+        <FastForward /> Do more today
+      </Button>
+      {error ? <span className="text-xs text-bad">{error}</span> : null}
+    </span>
+  );
+}
+
+/** Plan a busy day ahead from the calendar: skip it, or make it light (fewer new questions, no automatic reviews). */
+export function DayModeControls({ planId, date, mode, lightNew, quota }: { planId: number; date: string; mode: "normal" | "skip" | "light"; lightNew: number | null; quota: number }) {
+  const { pending, run, error } = useAction();
+  const set = (m: Parameters<typeof setDayModeAction>[2]) => run(() => setDayModeAction(planId, date, m));
+  const lightOptions = Array.from({ length: Math.max(0, quota) }, (_, i) => i); // 0 … quota-1
+  return (
+    <span className="flex items-center gap-1">
+      {mode !== "normal" ? (
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => set({ mode: "normal" })} title="Back to a normal day">
+          <Undo2 /> Normal
+        </Button>
+      ) : null}
+      {lightOptions.length ? (
+        <Select
+          aria-label={`Light day on ${date}`}
+          title="Light day: fewer new questions and no automatic reviews. Due reviews stay due."
+          className="h-7 w-auto px-1.5 text-xs"
+          disabled={pending}
+          value={mode === "light" ? String(lightNew ?? 0) : ""}
+          onChange={(e) => (e.target.value === "" ? undefined : set({ mode: "light", newQuota: Number(e.target.value) }))}
+        >
+          {mode !== "light" ? <option value="">Light…</option> : null}
+          {lightOptions.map((k) => (
+            <option key={k} value={k}>
+              Light: {k} new
+            </option>
+          ))}
+        </Select>
+      ) : null}
+      {mode !== "skip" ? (
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => set({ mode: "skip" })} title="Skip this day. Your place in the queue is kept.">
+          <CalendarOff /> Skip
+        </Button>
+      ) : null}
+      {error ? <span className="text-[11px] text-bad">{error}</span> : null}
     </span>
   );
 }

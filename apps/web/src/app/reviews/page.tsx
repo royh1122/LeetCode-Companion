@@ -3,7 +3,7 @@ import { getReviewQueue } from "@lcc/db";
 import { formatLocalDate } from "@lcc/shared";
 import { ASSIGNMENT_TYPE_LABEL, DifficultyBadge, MasteryBadge, OutcomeBadge } from "@/components/badges";
 import { PracticeButton } from "@/components/practice";
-import { PostponeButtons, PullMore } from "@/components/review-actions";
+import { PostponeButtons, PullEarly, PullMore } from "@/components/review-actions";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
 import { db } from "@/lib/server";
 
@@ -58,7 +58,11 @@ export default function ReviewsPage() {
         )}
       </Card>
       <Card>
-        <CardHeader title="Coming up (next 14 days)" />
+        <CardHeader
+          title="Coming up (next 14 days)"
+          description={`${q.earlyAvailable.length} due in the next 2 days can be done early. The next interval then counts from the day you do it. This week's new questions wait for the weekend review instead.`}
+          actions={<PullEarly available={q.earlyAvailable.length} />}
+        />
         {q.upcoming.length ? (
           <ul className="divide-y divide-border text-sm">
             {q.upcoming.map((r) => (

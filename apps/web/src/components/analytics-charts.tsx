@@ -11,6 +11,8 @@ interface Week {
   medianFirstAcceptedMin: number | null;
   medianSessionMin: number | null;
   adherence: number | null;
+  newDone: number;
+  newTarget: number | null;
 }
 interface Snapshot {
   date: string;
@@ -58,6 +60,16 @@ export function AnalyticsCharts({ weekly, snapshots }: { weekly: Week[]; snapsho
       />
       <LineSeries title="Independent solve rate" data={w} x="label" series={[{ key: "independentPct", name: "Independent", color: "var(--series-1)" }]} yDomain={[0, 100]} yFormat={pct} note="Share of sessions rated Easy or Independent." />
       <LineSeries title="Plan adherence" data={w} x="label" series={[{ key: "adherencePct", name: "Completed / assigned", color: "var(--series-1)" }]} yDomain={[0, 100]} yFormat={pct} note="New + mandatory review assignments completed, counting only days that have passed." />
+      <BarSeries
+        title="Weekly new-question target"
+        data={w}
+        x="label"
+        series={[
+          { key: "newDone", name: "Done", color: "var(--series-1)" },
+          { key: "newTarget", name: "Target", color: "var(--series-2)" },
+        ]}
+        note="New questions finished each week vs. the weekly target (your current daily amounts). Unlike adherence, this shows days you missed."
+      />
       {snaps.length ? (
         <LineSeries
           title="Review backlog"

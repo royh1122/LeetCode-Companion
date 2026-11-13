@@ -15,6 +15,13 @@
       "when": 1794275872506,
       "tag": "0001_session_complexity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794539529756,
+      "tag": "0002_plan_light_days",
+      "breakpoints": true
     }
   ]
 }
