@@ -72,7 +72,7 @@ function renderSync() {
     el.append(h("span", { className: "dot", style: "background:var(--bad)" }), "Extension error");
     return;
   }
-  const { conn, queueLength, paired, failed } = state;
+  const { conn, queueLength, paired, failed, retryable } = state;
   let color = "var(--good)";
   let text = "Synced";
   if (!paired) {
@@ -92,7 +92,9 @@ function renderSync() {
     text = "Not connected yet";
   }
   el.append(h("span", { className: "dot", style: `background:${color}` }), text);
-  if (failed.length) el.append(h("span", { className: "chip bad", title: failed.map((f) => `${f.event.type}: ${f.error}`).join("\n") }, `${failed.length} rejected`));
+  if (failed.length) el.append(h("span", { className: "chip bad", title: failed.map((f) => `${f.event.type}: ${f.error}`).join("\n") }, retryable ? `${retryable} not sent` : `${failed.length} rejected`));
+  // Set-aside changes still hold their data (code, notes): they can be sent again once the dashboard is fixed.
+  if (retryable) el.append(h("button", { title: "Send the changes the dashboard could not take again", onclick: async () => (await send({ type: "sync:retry" }), refresh()) }, "Retry"));
   if (!paired || conn.status === "unauthorized") el.append(h("button", { onclick: () => chrome.runtime.openOptionsPage() }, "Options"));
   else el.append(h("button", { onclick: async () => (await send({ type: "sync:now" }), refresh()) }, "Sync now"));
 }
@@ -149,6 +151,8 @@ function render(url: string) {
   // Bound to a session
   section.hidden = false;
   const fresh = renderedSessionId !== s.id;
+  // Switching to another session with an edit still waiting: hand it over before the fields are replaced.
+  if (fresh && renderedSessionId && dirty.size) void saveNotesNow().catch(() => undefined);
   renderedSessionId = s.id;
   $("s-title").textContent = `${s.problem.frontendId ? `#${s.problem.frontendId} ` : ""}${s.problem.title ?? s.problem.slug}`;
   $("s-meta").textContent = `${s.isReview ? "Review" : "First attempt"} · started ${new Date(s.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${s.status === "paused" ? " · paused" : ""}`;
@@ -254,22 +258,30 @@ function tick() {
   $("s-elapsed").textContent = formatClock(now - s.startedAt);
 }
 
+/** Hand the edited fields to the background now (the pause after typing elapsed, or the panel is closing). */
+async function saveNotesNow() {
+  if (notesTimer) clearTimeout(notesTimer);
+  notesTimer = null;
+  const id = renderedSessionId;
+  if (!id || !dirty.size) return;
+  // Send only the fields edited here, so an untouched field never blanks what the dashboard has.
+  const sent = Object.fromEntries([...dirty].map((k) => [k, fieldEl(k).value])) as Partial<Record<TextField, string>>;
+  await send({ type: "notes", sessionId: id, ...sent });
+  for (const [k, v] of Object.entries(sent)) if (fieldEl(k as TextField).value === v) dirty.delete(k as TextField);
+  $("s-notes-status").textContent = "· saved locally";
+}
+
 for (const f of Object.keys(TEXT_FIELDS) as TextField[]) {
   fieldEl(f).addEventListener("input", () => {
-    const s = state?.session;
-    if (!s) return;
+    if (!state?.session) return;
     $("s-notes-status").textContent = "· unsaved";
     dirty.add(f);
     if (notesTimer) clearTimeout(notesTimer);
-    notesTimer = setTimeout(async () => {
-      // Send only the fields edited here, so an untouched field never blanks what the dashboard has.
-      const sent = Object.fromEntries([...dirty].map((k) => [k, fieldEl(k).value])) as Partial<Record<TextField, string>>;
-      await send({ type: "notes", sessionId: s.id, ...sent });
-      for (const [k, v] of Object.entries(sent)) if (fieldEl(k as TextField).value === v) dirty.delete(k as TextField);
-      $("s-notes-status").textContent = "· saved locally";
-    }, 700);
+    notesTimer = setTimeout(() => void saveNotesNow(), 700);
   });
 }
+// Closing the panel right after typing must not lose the last edit.
+window.addEventListener("pagehide", () => void saveNotesNow().catch(() => undefined));
 
 $("s-finish").addEventListener("click", async () => {
   const s = state?.session;
@@ -277,7 +289,8 @@ $("s-finish").addEventListener("click", async () => {
   const btn = $<HTMLButtonElement>("s-finish");
   btn.disabled = true;
   if (notesTimer) clearTimeout(notesTimer); // the finish event carries the text fields
-  const notes = fieldEl("notes").value;
+  // Notes go along only if typed here or non-empty: an untouched empty box must not blank notes typed in the dashboard.
+  const notes = dirty.has("notes") || fieldEl("notes").value ? fieldEl("notes").value : undefined;
   // Complexity goes along only if known (typed now or earlier), never as an accidental blank.
   const known = (f: "timeComplexity" | "spaceComplexity") => (dirty.has(f) || s[f] !== undefined || fieldEl(f).value ? fieldEl(f).value : undefined);
   const timeComplexity = known("timeComplexity");

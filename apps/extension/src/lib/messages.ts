@@ -16,6 +16,7 @@ export type BgRequest =
   | { type: "abandon"; sessionId: string }
   | { type: "panel:get"; tabId?: number | null }
   | { type: "sync:now" }
+  | { type: "sync:retry" }
   | { type: "list:import"; tabId?: number }
   | { type: "config:get" }
   | { type: "config:set"; config: Partial<Config> }

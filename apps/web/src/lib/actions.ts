@@ -57,9 +57,17 @@ export async function abandonSession(id: string) {
   return wrap(() => core.abandonSession(db(), id));
 }
 
+const notesBase = z.record(z.string(), z.string()).optional();
+
+/**
+ * Autosave for a session's text fields. `base` is the text the editor last saw stored; when the
+ * stored text has changed since (another tab, or the extension), nothing is saved and the stored
+ * text comes back in `conflicts` so the editor can ask.
+ */
 export async function saveSessionNotes(
   id: string,
   patch: { notes?: string; struggles?: string; takeaway?: string; mistakes?: string; timeComplexity?: string; spaceComplexity?: string },
+  base?: Record<string, string>,
 ) {
   try {
     const p = z
@@ -73,7 +81,8 @@ export async function saveSessionNotes(
       })
       .partial()
       .parse(patch);
-    core.updateSessionNotes(db(), id, p);
+    const conflicts = core.updateSessionNotes(db(), id, p, notesBase.parse(base));
+    if (conflicts) return { ok: false as const, error: "Changed somewhere else", conflicts: conflicts as Record<string, string> };
     return { ok: true as const, savedAt: Date.now() };
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
@@ -179,9 +188,11 @@ export async function linkSubmissionAction(submissionId: number, sessionId: stri
   return wrap(() => core.linkSubmission(db(), submissionId, sessionId));
 }
 
-export async function saveProblemNotes(problemId: number, patch: Record<string, string>) {
+/** Autosave for a problem's permanent notes; `base` and `conflicts` work as in `saveSessionNotes`. */
+export async function saveProblemNotes(problemId: number, patch: Record<string, string>, base?: Record<string, string>) {
   try {
-    core.saveNotes(db(), problemId, patch);
+    const conflicts = core.saveNotes(db(), problemId, patch, notesBase.parse(base));
+    if (conflicts) return { ok: false as const, error: "Changed somewhere else", conflicts: conflicts as Record<string, string> };
     return { ok: true as const, savedAt: Date.now() };
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : String(e) };

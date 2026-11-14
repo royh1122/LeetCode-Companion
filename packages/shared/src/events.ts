@@ -187,5 +187,9 @@ export interface ExtensionSessionState {
   outcome: string | null;
   endedAt: number | null;
   activeMs: number | null;
+  /** The session's text fields as stored now, so the extension can show what was typed in the dashboard. */
+  notes?: string | null;
+  timeComplexity?: string | null;
+  spaceComplexity?: string | null;
   submissions: { id: number; verdict: string; kind: string; submittedAt: number; platformSubmissionId: string | null }[];
 }

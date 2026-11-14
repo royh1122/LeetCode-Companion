@@ -80,9 +80,28 @@ export function isLocalDashboardUrl(url: string): boolean {
   }
 }
 
-/** Rejected events are kept only for display (type + error); their payload (code, notes) is dropped. */
+/** For display (type + error) only: the payload (code, notes) is left out. */
 function brief(e: SyncEvent): SyncEvent {
   return { id: e.id, clientId: e.clientId, seq: e.seq, createdAt: e.createdAt, type: e.type, payload: {} } as unknown as SyncEvent;
+}
+
+/**
+ * An event that left the queue without being applied.
+ * - Rejected by the dashboard (it recorded why): display only, payload dropped.
+ * - `held`: the dashboard kept failing on it, so it was set aside to let the rest sync. It keeps
+ *   its full payload and can be sent again (`retryFailed`); it is never discarded.
+ */
+export interface FailedEvent {
+  event: SyncEvent;
+  error: string;
+  at: number;
+  held?: boolean;
+}
+
+/** Display-only entries are capped; held ones are all kept. */
+function capFailed(list: FailedEvent[]): FailedEvent[] {
+  const display = new Set(list.filter((f) => !f.held).slice(-20));
+  return list.filter((f) => f.held || display.has(f));
 }
 
 export interface StudyPlanOffer {
@@ -161,6 +180,14 @@ export class Controller {
   }
   private async queue() {
     return (await this.deps.local.get<QueuedEvent[]>("queue")) ?? [];
+  }
+  private async failed() {
+    return (await this.deps.local.get<FailedEvent[]>("failed")) ?? [];
+  }
+  /** True only when our dashboard answers: not during an outage, and not when the URL points at some other program. */
+  private async dashboardAnswers(): Promise<boolean> {
+    const p = await this.deps.api.ping();
+    return p.ok && p.data?.ok === true;
   }
   async conn(): Promise<Conn> {
     const c = await this.deps.local.get<Conn>("conn");
@@ -507,24 +534,22 @@ export class Controller {
     return s;
   }
 
-  /** Save the session's text fields (any subset). The queued event is a snapshot of every field known locally. */
+  /**
+   * Save the session's text fields (any subset). The queued event carries only fields edited here
+   * (these, plus those of an unsent earlier edit it replaces), so a field that was not touched in
+   * the panel never overwrites what the dashboard has for it.
+   */
   setNotes(id: string, patch: { notes?: string; timeComplexity?: string; spaceComplexity?: string }) {
     return this.lock(async () => {
-      const s = await this.mutateSession(id, (x) => {
+      await this.mutateSession(id, (x) => {
         if (patch.notes !== undefined) x.notes = patch.notes;
         if (patch.timeComplexity !== undefined) x.timeComplexity = patch.timeComplexity;
         if (patch.spaceComplexity !== undefined) x.spaceComplexity = patch.spaceComplexity;
       });
-      await this.enqueue(
-        "session.notes",
-        {
-          sessionId: id,
-          notes: s.notes,
-          ...(s.timeComplexity !== undefined ? { timeComplexity: s.timeComplexity } : {}),
-          ...(s.spaceComplexity !== undefined ? { spaceComplexity: s.spaceComplexity } : {}),
-        },
-        { coalesceKey: id },
-      );
+      const unsent = (await this.queue()).find((x) => x.event.type === "session.notes" && (x.event.payload as { sessionId?: string }).sessionId === id);
+      const edited: Record<string, unknown> = { ...(unsent?.event.payload as Record<string, unknown> | undefined), sessionId: id };
+      for (const f of ["notes", "timeComplexity", "spaceComplexity"] as const) if (patch[f] !== undefined) edited[f] = patch[f];
+      await this.enqueue("session.notes", edited, { coalesceKey: id });
       void this.flush();
     });
   }
@@ -626,14 +651,21 @@ export class Controller {
           // Being offline or unpaired is not the events' fault; only server-side failures count.
           if (res.error.kind === "server" || res.error.kind === "bad_request") {
             const message = res.error.message;
+            // ...and only while the dashboard itself answers. When it is broken (every request
+            // fails), or the URL points at some other program, no event is at fault: keep them all.
+            if (!(await this.dashboardAnswers())) {
+              await this.setConn("offline", message);
+              break;
+            }
             await this.lock(async () => {
               const q = await this.queue();
               const ids = new Set(batch.map((b) => b.event.id));
               if (batch.length === 1 && batch[0]!.attempts >= 5) {
                 // Set the culprit aside (visible in the panel) so everything behind it can sync.
-                const failed = (await this.deps.local.get<{ event: SyncEvent; error: string; at: number }[]>("failed")) ?? [];
-                failed.push({ event: brief(batch[0]!.event), error: message, at: this.now() });
-                await this.deps.local.set({ queue: q.filter((x) => !ids.has(x.event.id)), failed: failed.slice(-20) });
+                // It keeps its payload and can be sent again from the panel.
+                const failed = await this.failed();
+                failed.push({ event: batch[0]!.event, error: message, at: this.now(), held: true });
+                await this.deps.local.set({ queue: q.filter((x) => !ids.has(x.event.id)), failed: capFailed(failed) });
               } else {
                 await this.deps.local.set({ queue: q.map((x) => (ids.has(x.event.id) ? { ...x, attempts: x.attempts + 1 } : x)) });
               }
@@ -645,7 +677,7 @@ export class Controller {
         await this.lock(async () => {
           const byId = new Map(res.data.results.map((r) => [r.id, r]));
           const q = await this.queue();
-          const failed = (await this.deps.local.get<{ event: SyncEvent; error: string; at: number }[]>("failed")) ?? [];
+          const failed = await this.failed();
           const sessions = await this.sessions();
           const keep: QueuedEvent[] = [];
           for (const item of q) {
@@ -660,13 +692,25 @@ export class Controller {
             if (sid && r.sessionId && r.sessionId !== sid && sessions[sid]) sessions[sid]!.serverId = r.sessionId;
             if (sid && r.status === "rejected" && item.event.type === "session.start" && sessions[sid]) sessions[sid]!.missingOnServer = true;
           }
-          await this.deps.local.set({ queue: keep, failed: failed.slice(-20), sessions });
+          await this.deps.local.set({ queue: keep, failed: capFailed(failed), sessions });
         });
       }
     } finally {
       this.flushing = false;
     }
     return { sent, remaining: (await this.queue()).length };
+  }
+
+  /** Put set-aside events back in the queue, in their original order, to be sent again. */
+  retryFailed() {
+    return this.lock(async () => {
+      const failed = await this.failed();
+      const held = failed.filter((f) => f.held);
+      if (!held.length) return 0;
+      const q = [...held.map((f) => ({ event: f.event, attempts: 0 })), ...(await this.queue())].sort((a, b) => a.event.seq - b.event.seq);
+      await this.deps.local.set({ queue: q, failed: failed.filter((f) => !f.held) });
+      return held.length;
+    });
   }
 
   /**
@@ -680,23 +724,40 @@ export class Controller {
       const q = await this.queue();
       const pendingFor = new Set(q.map((x) => (x.event.payload as { sessionId?: string }).sessionId));
       let reached = false;
+      let confirmedDashboard = false;
       for (const s of Object.values(sessions)) {
         if (pendingFor.has(s.id)) continue; // our own changes haven't landed yet
         if (s.missingOnServer) continue; // its start was rejected; the server never had it
         const r = await this.deps.api.session(s.serverId ?? s.id);
         if (!r.ok) {
           await this.noteApiError(r.error);
+          // Keep what earlier sessions in this pass already learned (their tabs are unbound by now).
+          await this.deps.local.set({ sessions });
           return;
         }
-        reached = true;
         if (!r.data) {
+          // "Not found" only means "deleted" when it is our dashboard saying so. Some other program
+          // on that address would answer 404 for everything, and must not make us forget sessions.
+          if (!confirmedDashboard && !(await this.dashboardAnswers())) {
+            await this.setConn("offline", "The dashboard did not answer at this address.");
+            await this.deps.local.set({ sessions });
+            return;
+          }
+          confirmedDashboard = true;
+          reached = true;
           // The server had this session (nothing is pending for it) but no longer does: it was deleted
           // in the dashboard. Forget it here too, so the panel doesn't keep showing it.
           delete sessions[s.id];
           await this.unbindSession(s.id, "offer");
           continue;
         }
+        reached = true;
         const srv = r.data;
+        // Nothing of ours is waiting to be sent, so the dashboard's text is the latest: show it in
+        // the panel (it may have been typed there).
+        if (typeof srv.notes === "string") s.notes = srv.notes;
+        if (typeof srv.timeComplexity === "string") s.timeComplexity = srv.timeComplexity;
+        if (typeof srv.spaceComplexity === "string") s.spaceComplexity = srv.spaceComplexity;
         if (srv.status === "completed" || srv.status === "abandoned") {
           if (s.status === "in_progress" || s.status === "paused") await this.unbindSession(s.id, "ignored");
           s.status = srv.status;
@@ -776,7 +837,7 @@ export class Controller {
       this.tabs(),
       this.sessions(),
       this.queue(),
-      this.deps.local.get<{ event: SyncEvent; error: string; at: number }[]>("failed"),
+      this.failed(),
       this.conn(),
       this.getConfig(),
       this.deps.ephemeral.get<Record<string, StudyPlanOffer>>("studyPlans"),
@@ -794,7 +855,10 @@ export class Controller {
         .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0] ?? null,
       queueLength: q.length,
       pendingForSession,
-      failed: (failed ?? []).slice(-5),
+      // Payloads (code, notes) stay in the worker; the panel only needs what to show.
+      failed: failed.slice(-5).map((f) => ({ ...f, event: brief(f.event) })),
+      /** Set-aside events that still hold their data and can be sent again. */
+      retryable: failed.filter((f) => f.held).length,
       conn,
       paired: !!cfg.token,
       serverUrl: cfg.serverUrl,

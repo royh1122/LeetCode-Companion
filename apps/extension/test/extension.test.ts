@@ -124,13 +124,31 @@ describe("activity estimation", () => {
 function fakeApi(opts: { online?: boolean; context?: Partial<ExtensionContext> } = {}) {
   const sent: { type: string; id: string; payload: Record<string, unknown> }[] = [];
   const seenIds = new Set<string>();
-  const state = { online: opts.online ?? true, failNext: false, serverSessions: {} as Record<string, ExtensionSessionState>, contextOverride: null as Partial<ExtensionContext> | null, poison: null as string | null };
+  const state = {
+    online: opts.online ?? true,
+    failNext: false,
+    serverSessions: {} as Record<string, ExtensionSessionState>,
+    contextOverride: null as Partial<ExtensionContext> | null,
+    poison: null as string | null,
+    /** The dashboard is running but broken: every request gets a 500. */
+    broken: false,
+    /** Some other program listens on the configured address: it answers 404 to everything. */
+    notOurs: false,
+  };
+  const down = () =>
+    !state.online
+      ? { ok: false as const, error: { kind: "offline" as const, message: "down" } }
+      : state.broken
+        ? { ok: false as const, error: { kind: "server" as const, message: "Dashboard error 500" } }
+        : null;
+  const notFound = { ok: false as const, error: { kind: "bad_request" as const, message: "Request failed (404)" } };
   const api = {
     async ping() {
-      return state.online ? { ok: true, data: { ok: true, serverTime: 0 } } : { ok: false, error: { kind: "offline", message: "down" } };
+      return down() ?? (state.notOurs ? notFound : { ok: true, data: { ok: true, serverTime: 0 } });
     },
     async context(slug) {
-      if (!state.online) return { ok: false, error: { kind: "offline", message: "down" } };
+      if (down()) return down()!;
+      if (state.notOurs) return notFound;
       return {
         ok: true,
         data: {
@@ -146,11 +164,13 @@ function fakeApi(opts: { online?: boolean; context?: Partial<ExtensionContext> }
       };
     },
     async session(id) {
-      if (!state.online) return { ok: false, error: { kind: "offline", message: "down" } };
+      if (down()) return down()!;
+      if (state.notOurs) return { ok: true, data: null }; // a 404 reads as "no such session"
       return { ok: true, data: state.serverSessions[id] ?? null };
     },
     async sendEvents(events) {
-      if (!state.online) return { ok: false, error: { kind: "offline", message: "down" } };
+      if (down()) return down()!;
+      if (state.notOurs) return notFound;
       if ((events as { type: string }[]).some((e) => e.type === state.poison)) return { ok: false, error: { kind: "server", message: "Dashboard error 500" } };
       return {
         ok: true,
@@ -346,8 +366,9 @@ describe("Controller", () => {
     await env.ctl.setNotes(sessionId!, { timeComplexity: "O(n)" });
     await env.ctl.setNotes(sessionId!, { spaceComplexity: "O(n)" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
-    // Coalesced into one snapshot carrying every known field.
-    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, notes: "hash map", timeComplexity: "O(n)", spaceComplexity: "O(n)" });
+    // Coalesced into one event carrying the fields edited since the last one was sent. The notes
+    // were not touched again, so they are not sent again (the dashboard may have newer ones).
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, timeComplexity: "O(n)", spaceComplexity: "O(n)" });
     await env.ctl.finish(sessionId!, { outcome: "independent", hintsUsed: false, spaceComplexity: "O(1)" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     expect(env.sent.find((e) => e.type === "session.finish")!.payload.reflection).toMatchObject({ spaceComplexity: "O(1)" });
@@ -437,7 +458,16 @@ describe("Controller", () => {
     await env.ctl.finish(sessionId!, { outcome: "independent", hintsUsed: false });
     for (let i = 0; i < 20 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     expect(env.sent.some((e) => e.type === "session.finish")).toBe(true);
-    expect((await env.ctl.panelState(1)).failed.map((f) => f.event.type)).toEqual(["session.notes"]);
+    const panel = await env.ctl.panelState(1);
+    expect(panel.failed.map((f) => f.event.type)).toEqual(["session.notes"]);
+    // It keeps its data in the worker (the panel only gets the type and the error) and can be sent again.
+    expect(panel.failed[0]!.event.payload).toEqual({});
+    expect(panel.retryable).toBe(1);
+    env.state.poison = null;
+    expect(await env.ctl.retryFailed()).toBe(1);
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    expect(env.sent.find((e) => e.type === "session.notes")!.payload.notes).toBe("the server chokes on this");
+    expect(await env.ctl.panelState(1)).toMatchObject({ failed: [], retryable: 0, queueLength: 0 });
     // Being offline never counts against an event.
     env.state.online = false;
     await env.ctl.onPage(1, { slug: "3sum" });
@@ -446,6 +476,75 @@ describe("Controller", () => {
     env.state.online = true;
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     expect(env.sent.filter((e) => e.type === "session.start").map((e) => e.payload.sessionId)).toContain(second.sessionId);
+  });
+
+  it("a dashboard that keeps answering with errors never costs an event", async () => {
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    env.state.broken = true; // e.g. rebuilt underneath itself, or its database is locked
+    const { sessionId } = await env.ctl.startSession(1);
+    await env.ctl.onIntercepted(1, interpret("POST", "https://leetcode.com/problems/two-sum/submit/", F.SUBMIT_BODY, F.SUBMIT_RESPONSE)!);
+    await env.ctl.setNotes(sessionId!, { notes: "written during the outage" });
+    await env.ctl.finish(sessionId!, { outcome: "independent", hintsUsed: false });
+    const queued = ((await env.local.get<unknown[]>("queue")) ?? []).length;
+    expect(queued).toBeGreaterThanOrEqual(4);
+    // Far more failed attempts than it takes to set a single bad event aside.
+    for (let i = 0; i < 40; i++) await env.ctl.flush();
+    await env.ctl.reconcile();
+    expect(((await env.local.get<unknown[]>("queue")) ?? []).length).toBe(queued);
+    expect(await env.ctl.panelState(1)).toMatchObject({ failed: [], retryable: 0, conn: { status: "offline" } });
+    // The session is still known locally (reconcile must not read the outage as "deleted").
+    expect((await env.ctl.panelState(1)).recentlyFinished?.id).toBe(sessionId);
+
+    env.state.broken = false;
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    const types = env.sent.map((e) => e.type);
+    expect(types[0]).toBe("session.start");
+    expect(types).toEqual(expect.arrayContaining(["submission.captured", "session.notes", "session.finish"]));
+    expect(env.sent.find((e) => e.type === "submission.captured")!.payload.code).toContain("twoSum");
+    expect(env.sent.find((e) => e.type === "session.notes")!.payload.notes).toBe("written during the outage");
+    expect((await env.ctl.panelState(1)).queueLength).toBe(0);
+  });
+
+  it("another program on the dashboard's address neither drops events nor makes it forget sessions", async () => {
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    const { sessionId } = await env.ctl.startSession(1);
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    // The dashboard is stopped and something else now answers there, with 404 for every path.
+    env.state.notOurs = true;
+    await env.ctl.reconcile();
+    expect((await env.ctl.panelState(1)).session?.id).toBe(sessionId);
+    await env.ctl.setNotes(sessionId!, { notes: "kept" });
+    for (let i = 0; i < 20; i++) await env.ctl.flush();
+    await env.ctl.reconcile();
+    expect(await env.ctl.panelState(1)).toMatchObject({ session: { id: sessionId }, failed: [], queueLength: 1 });
+    env.state.notOurs = false;
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    expect(env.sent.find((e) => e.type === "session.notes")!.payload.notes).toBe("kept");
+  });
+
+  it("shows notes typed in the dashboard, and an untouched notes box never overwrites them", async () => {
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    const { sessionId } = await env.ctl.startSession(1);
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    env.state.serverSessions[sessionId!] = { id: sessionId!, status: "in_progress", outcome: null, endedAt: null, activeMs: 0, notes: "typed in the dashboard", timeComplexity: null, spaceComplexity: null, submissions: [] };
+    await env.ctl.reconcile();
+    expect((await env.ctl.panelState(1)).session).toMatchObject({ notes: "typed in the dashboard" });
+    // Only the complexity is edited in the panel: the event must not carry the notes at all.
+    await env.ctl.setNotes(sessionId!, { timeComplexity: "O(n)" });
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, timeComplexity: "O(n)" });
+    // While an edit of ours is still waiting to be sent, the dashboard's copy must not replace it.
+    env.state.online = false;
+    await env.ctl.setNotes(sessionId!, { notes: "typed in the panel" });
+    env.state.online = true;
+    await env.ctl.reconcile();
+    expect((await env.ctl.panelState(1)).session).toMatchObject({ notes: "typed in the panel" });
   });
 
   it("offers to resume an open session after the browser restarts (tabs forgotten)", async () => {

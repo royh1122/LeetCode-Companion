@@ -44,7 +44,9 @@ Business rules live in exactly one place. The extension imports URL and verdict 
 - Pages are server components that read SQLite directly through `@lcc/db`. They are always dynamic, never cached.
 - Mutations are server actions (`apps/web/src/lib/actions.ts`); Next.js checks their origin.
 - **Live updates:** a tiny client component polls `/api/revision`, a counter bumped by every write, every 3 seconds and calls `router.refresh()` when it changes. That's how extension captures appear without reloading. Client-side state such as half-typed notes survives the refresh.
-- Autosave fields save after 800 ms idle and on blur. They show *Saving… / Saved / Not saved — retrying* and warn before unload while dirty.
+- Autosave fields save after 800 ms idle, on blur and when the field leaves the page (in-app navigation). They show *Saving… / Saved / Not saved — retrying* and warn before unload while dirty.
+  - The same text can be edited in another tab or in the extension's side panel. Each save sends the text the field last saw stored; if the stored text has changed since, nothing is written and the field shows the other version with **Keep mine** / **Use the other version**.
+  - A field with no unsaved edits follows the stored text after a refresh.
 
 ## Extension
 
@@ -62,11 +64,11 @@ LeetCode page ──(MAIN world: fetch/XHR observer)──postMessage──▶ i
   - `chrome.storage.session` holds tab bindings and pending study-plan offers, which are only valid for one browser run.
 - **Queue**
   - Events carry a UUID and a sequence number and are flushed in order, in batches of 50.
-  - Cumulative events (activity, notes) are coalesced.
+  - Cumulative events (activity, notes) are coalesced. A notes event carries only the fields edited in the panel since the last one was sent.
   - A network or server error keeps the batch for retry: on every action, on `chrome.alarms` every 30 s, and on **Sync now**.
   - `rejected` results move to a failed list that is visible in the panel.
-  - If the server keeps failing on a batch (not when it's merely offline), events are retried one at a time, and one that still fails is moved to the failed list so the rest can sync.
-- **Reconciliation:** every 30 s, open local sessions are checked against the server. A session finished or abandoned in the dashboard unbinds its tabs.
+  - If the server keeps failing on a batch while it otherwise answers (its ping succeeds), events are retried one at a time, and one that still fails is set aside so the rest can sync. A set-aside event keeps its data and can be sent again with **Retry** in the panel. While the dashboard is offline, broken (every request fails) or not the program answering at that address, nothing is counted against any event.
+- **Reconciliation:** every 30 s, local sessions with nothing waiting to be sent are checked against the server. A session finished or abandoned in the dashboard unbinds its tabs, and text typed in the dashboard replaces the panel's copy. A session the server no longer has is forgotten only after the dashboard's ping confirms it is the dashboard answering.
 - **Session start paths**
   1. Dashboard **Start**: the server creates the session, then the tab opens with `#lcc-session=<id>` and the extension binds to it.
   2. A direct visit gets an offer (start, resume, history or ignore), shown in the page and in the panel.

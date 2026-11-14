@@ -53,6 +53,9 @@ export function getExtensionSessionState(db: Db, id: string): ExtensionSessionSt
     outcome: s.outcome,
     endedAt: s.endedAt,
     activeMs: s.activeMs,
+    notes: s.notes,
+    timeComplexity: s.timeComplexity,
+    spaceComplexity: s.spaceComplexity,
     submissions: subs.map((x) => ({ id: x.id, verdict: x.verdict, kind: x.kind, submittedAt: x.submittedAt, platformSubmissionId: x.platformSubmissionId })),
   };
 }

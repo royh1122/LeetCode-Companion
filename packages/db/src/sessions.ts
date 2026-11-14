@@ -175,18 +175,42 @@ export function resumeSession(db: Db, id: string, at = Date.now()) {
   return getSession(db, id)!;
 }
 
+export const SESSION_NOTE_FIELDS = ["notes", "struggles", "takeaway", "mistakes", "timeComplexity", "spaceComplexity"] as const;
+export type SessionNoteField = (typeof SESSION_NOTE_FIELDS)[number];
+
+export function isOpenSession(s: Pick<Session, "status">): boolean {
+  return openStatuses.includes(s.status);
+}
+
+/**
+ * Patch a session's text fields.
+ *
+ * `base` is what the editor last saw stored for each field. If a field's stored text has changed
+ * since (another tab or the extension saved it), nothing is written and the stored text of those
+ * fields is returned, so the editor can ask instead of overwriting. Returns null when saved.
+ */
 export function updateSessionNotes(
   db: Db,
   id: string,
-  patch: { notes?: string | null; struggles?: string | null; takeaway?: string | null; mistakes?: string | null; timeComplexity?: string | null; spaceComplexity?: string | null },
-) {
+  patch: Partial<Record<SessionNoteField, string | null>>,
+  base?: Partial<Record<SessionNoteField, string>>,
+): Partial<Record<SessionNoteField, string>> | null {
   const s = getSession(db, id);
   if (!s) throw new DomainError("not_found", "Session not found");
-  const isOpen = openStatuses.includes(s.status);
+  if (base) {
+    const conflicts: Partial<Record<SessionNoteField, string>> = {};
+    for (const f of SESSION_NOTE_FIELDS) {
+      if (patch[f] === undefined || base[f] === undefined) continue;
+      const stored = s[f] ?? "";
+      if (stored !== base[f] && stored !== (patch[f] ?? "")) conflicts[f] = stored;
+    }
+    if (Object.keys(conflicts).length) return conflicts;
+  }
   db.update(sessions)
-    .set({ ...patch, ...(isOpen ? { lastActivityAt: Date.now() } : {}), updatedAt: Date.now() })
+    .set({ ...patch, ...(isOpenSession(s) ? { lastActivityAt: Date.now() } : {}), updatedAt: Date.now() })
     .where(eq(sessions.id, id))
     .run();
+  return null;
 }
 
 export function recordActivity(db: Db, id: string, activeMs: number, lastActivityAt: number) {

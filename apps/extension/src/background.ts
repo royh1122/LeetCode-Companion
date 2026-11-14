@@ -89,6 +89,12 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
       await controller.reconcile();
       return r;
     }
+    case "sync:retry": {
+      await controller.retryFailed();
+      const r = await controller.flush();
+      await controller.reconcile();
+      return r;
+    }
     case "config:get":
       return controller.getConfig();
     case "config:set": {

@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { syncEventSchema, type SyncEvent, type SyncEventResult } from "@lcc/shared";
 import type { Db } from "./client";
-import { getMeta, setMeta } from "./meta";
+import { bumpRevision, getMeta, setMeta } from "./meta";
 import { upsertProblemFromHint } from "./problems";
 import { syncEvents } from "./schema";
 import {
@@ -9,6 +9,7 @@ import {
   abandonSession,
   finishSession,
   getSession,
+  isOpenSession,
   pauseSession,
   recordActivity,
   resumeSession,
@@ -55,11 +56,20 @@ function apply(db: Db, ev: SyncEvent): { sessionId?: string } {
     case "session.notes": {
       const id = resolveSessionId(db, ev.payload.sessionId)!;
       const { notes, timeComplexity, spaceComplexity } = ev.payload;
-      updateSessionNotes(db, id, {
+      const patch: { notes?: string; timeComplexity?: string; spaceComplexity?: string } = {
         ...(notes !== undefined ? { notes } : {}),
         ...(timeComplexity !== undefined ? { timeComplexity } : {}),
         ...(spaceComplexity !== undefined ? { spaceComplexity } : {}),
-      });
+      };
+      // A snapshot that arrives after the session ended (e.g. it was finished in the dashboard
+      // first) must not replace the final text: it only fills fields that were left empty.
+      const s = getSession(db, id);
+      if (s && !isOpenSession(s)) {
+        for (const f of ["notes", "timeComplexity", "spaceComplexity"] as const) if (s[f]?.trim()) delete patch[f];
+      }
+      updateSessionNotes(db, id, patch);
+      // The dashboard polls this to pick up text typed in the extension.
+      bumpRevision(db);
       return { sessionId: id };
     }
     case "session.finish": {

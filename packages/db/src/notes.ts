@@ -20,15 +20,28 @@ export function isNotesEmpty(n: ProblemNotes | null): boolean {
  * Autosave-friendly: patches only the given fields. Before overwriting, the
  * previous version is kept as a revision (at most one per 10 minutes, so
  * autosave doesn't flood history).
+ *
+ * `base` is what the editor last saw stored for each field. If a field's stored text has changed
+ * since (another tab saved it), nothing is written and the stored text of those fields is
+ * returned, so the editor can ask instead of overwriting. Returns null when saved.
  */
-export function saveNotes(db: Db, problemId: number, patch: NotesPatch) {
+export function saveNotes(db: Db, problemId: number, patch: NotesPatch, base?: NotesPatch): NotesPatch | null {
   const clean: NotesPatch = {};
   for (const f of NOTE_FIELDS) if (typeof patch[f] === "string") clean[f] = patch[f]!.slice(0, 50_000);
-  db.transaction((tx) => {
+  return db.transaction((tx) => {
     const existing = getNotes(tx, problemId);
+    if (base) {
+      const conflicts: NotesPatch = {};
+      for (const f of NOTE_FIELDS) {
+        if (clean[f] === undefined || typeof base[f] !== "string") continue;
+        const stored = existing?.[f] ?? "";
+        if (stored !== base[f] && stored !== clean[f]) conflicts[f] = stored;
+      }
+      if (Object.keys(conflicts).length) return conflicts;
+    }
     if (existing && !isNotesEmpty(existing)) {
       const changed = NOTE_FIELDS.some((f) => clean[f] !== undefined && clean[f] !== existing[f]);
-      if (!changed) return;
+      if (!changed) return null;
       const last = tx
         .select({ createdAt: problemNoteRevisions.createdAt })
         .from(problemNoteRevisions)
@@ -44,6 +57,7 @@ export function saveNotes(db: Db, problemId: number, patch: NotesPatch) {
       .values({ problemId, ...clean })
       .onConflictDoUpdate({ target: problemNotes.problemId, set: { ...clean, updatedAt: Date.now() } })
       .run();
+    return null;
   });
 }
 

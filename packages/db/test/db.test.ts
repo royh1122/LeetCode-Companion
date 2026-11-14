@@ -48,6 +48,9 @@ import {
   setDayMode,
   getLightDays,
   pullMoreReviews,
+  updateSessionNotes,
+  getExtensionSessionState,
+  getRevision,
 } from "../src";
 import { at, freshDb, TZ } from "./helpers";
 
@@ -586,6 +589,34 @@ describe("sessions & submissions", () => {
     expect(d.sessions[0]).toMatchObject({ outcome: "struggled", hintsUsed: true, difficultyRating: 4, nextReviewDate: addDays(MON, 3), recommendedReviewDate: addDays(MON, 3) });
   });
 
+  it("autosave never overwrites text that was changed somewhere else since the editor loaded it", () => {
+    const db = freshDb();
+    const p = getProblemBySlug(db, "two-sum")!;
+    const s = startSession(db, { problemId: p.id, origin: "dashboard" }, at(MON, 10)).session;
+    const notesOf = () => getProblemDetail(db, "two-sum")!.sessions[0]!.notes;
+    // Session notes: the editor loaded "" and saves its first text.
+    expect(updateSessionNotes(db, s.id, { notes: "from the dashboard" }, { notes: "" })).toBeNull();
+    // Meanwhile the extension (which sends no base) saved its own text.
+    updateSessionNotes(db, s.id, { notes: "from the panel" });
+    // The dashboard editor still thinks "from the dashboard" is stored: refused, and told what is there.
+    expect(updateSessionNotes(db, s.id, { notes: "from the dashboard, continued" }, { notes: "from the dashboard" })).toEqual({ notes: "from the panel" });
+    expect(notesOf()).toBe("from the panel");
+    // Once the editor has seen the other version, saving over it is deliberate.
+    expect(updateSessionNotes(db, s.id, { notes: "merged" }, { notes: "from the panel" })).toBeNull();
+    expect(notesOf()).toBe("merged");
+    // Saving the text that is already stored is never a conflict, and other fields are untouched.
+    expect(updateSessionNotes(db, s.id, { notes: "merged", timeComplexity: "O(n)" }, { notes: "stale", timeComplexity: "" })).toBeNull();
+    expect(getProblemDetail(db, "two-sum")!.sessions[0]).toMatchObject({ notes: "merged", timeComplexity: "O(n)" });
+
+    // Permanent notes, two tabs: both loaded an empty "insight".
+    expect(saveNotes(db, p.id, { insight: "tab one" }, { insight: "" })).toBeNull();
+    expect(saveNotes(db, p.id, { insight: "tab two" }, { insight: "" })).toEqual({ insight: "tab one" });
+    expect(getNotes(db, p.id)!.insight).toBe("tab one");
+    // A different field in the second tab saves fine.
+    expect(saveNotes(db, p.id, { pitfalls: "off by one" }, { pitfalls: "" })).toBeNull();
+    expect(getNotes(db, p.id)).toMatchObject({ insight: "tab one", pitfalls: "off by one" });
+  });
+
   it("session time/space complexity: saved per attempt, synced from the extension, fills empty permanent notes only", () => {
     const db = freshDb();
     const p = getProblemBySlug(db, "two-sum")!;
@@ -703,6 +734,24 @@ describe("sync events", () => {
     // Invalid & domain-failing events are rejected (not retried forever).
     const bad = processSyncEvents(db, [{ id: randomUUID(), type: "session.finish", payload: {} }, ev("session.pause", { sessionId: randomUUID(), at: Date.now() })]);
     expect(bad.map((b) => b.status)).toEqual(["rejected", "rejected"]);
+  });
+
+  it("notes typed in the extension refresh the dashboard, and a late snapshot never replaces a finished session's text", () => {
+    const db = freshDb();
+    const sid = randomUUID();
+    const problem = { slug: "two-sum" };
+    processSyncEvents(db, [ev("session.start", { sessionId: sid, problem, startedAt: at(MON, 10) })]);
+    const before = getRevision(db);
+    processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "typed in the panel" })]);
+    expect(getRevision(db)).toBeGreaterThan(before);
+    // The extension can read the text back (it may have been typed in the dashboard).
+    expect(getExtensionSessionState(db, sid)).toMatchObject({ notes: "typed in the panel", timeComplexity: null });
+    // Finished in the dashboard with the final text...
+    finishSession(db, sid, { outcome: "independent", hintsUsed: false, notes: "final text" }, at(MON, 10, 20));
+    // ...then an older snapshot from the extension arrives: it only fills what was left empty.
+    const late = processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "older draft", timeComplexity: "O(n)" })]);
+    expect(late[0]!.status).toBe("processed");
+    expect(getProblemDetail(db, "two-sum")!.sessions[0]).toMatchObject({ notes: "final text", timeComplexity: "O(n)" });
   });
 
   it("result arriving without the submit request creates an honest code-less row", () => {

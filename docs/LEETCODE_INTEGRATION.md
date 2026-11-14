@@ -63,6 +63,7 @@ The extension **observes your normal browser activity; it never makes requests t
 - **Sync events:**
   - Every event has a client-generated UUID and is processed at most once (the `sync_events` table).
   - Retries return `duplicate`. Permanent failures return `rejected`, are stored with the error, and appear in the panel and in Settings → Sync log.
+  - A notes event that arrives after its session ended (for example, the session was finished in the dashboard first) only fills fields that are still empty; it never replaces the final text.
 - **Sessions:** at most one *open* session per problem (partial unique index).
   - Starting again, a refresh, or a second tab resumes the open session instead of creating a new one.
   - If the extension created a session offline while another was opened on the dashboard, the server keeps the existing one and aliases the extension's id to it.
