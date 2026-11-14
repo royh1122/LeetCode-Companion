@@ -7,7 +7,7 @@ import { DifficultyBadge, OutcomeBadge } from "./badges";
 import { AssignmentMenu, PracticeButton } from "./practice";
 import { Badge, buttonVariants } from "./ui";
 
-export function QuestionRow({ item, today }: { item: TodayItem; today: string }) {
+export function QuestionRow({ item, today, showPatterns }: { item: TodayItem; today: string; showPatterns: boolean }) {
   const { assignment: a, problem: p, stats } = item;
   const done = a.status === "completed";
   const inactive = a.status === "skipped" || a.status === "postponed";
@@ -26,7 +26,7 @@ export function QuestionRow({ item, today }: { item: TodayItem; today: string })
             <DifficultyBadge d={p.difficulty} />
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-            {p.patterns[0] ? <span>{p.patterns[0]}</span> : null}
+            {showPatterns && p.patterns[0] ? <span>{p.patterns[0]}</span> : null}
             {item.carriedOver && !done ? <Badge tone="warn">Carried over · {item.daysOverdue}d</Badge> : null}
             {item.urgency === "overdue" ? <Badge tone="warn">Overdue {item.daysOverdue}d</Badge> : null}
             {a.type === "manual" ? <Badge tone="outline">Added</Badge> : null}

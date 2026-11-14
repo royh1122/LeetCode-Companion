@@ -155,6 +155,14 @@ export function GeneralSettingsForm({ settings, timeZones }: { settings: AppSett
         </div>
       </fieldset>
 
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" checked={s.showPatterns} onChange={(e) => setS({ ...s, showPatterns: e.target.checked })} className="mt-0.5 size-4 accent-[var(--accent)]" />
+        <span>
+          Show patterns in question lists
+          <span className="block text-xs text-muted">Today, Study plan, Review queue and Library. Off by default, because the pattern hints at the approach. Problem pages hide them behind a click when this is off.</span>
+        </span>
+      </label>
+
       <div className="flex items-center gap-3">
         <Button type="submit" variant="primary" disabled={pending}>
           Save settings

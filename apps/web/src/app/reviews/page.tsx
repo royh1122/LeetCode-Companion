@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getReviewQueue } from "@lcc/db";
+import { getAppSettings, getReviewQueue } from "@lcc/db";
 import { formatLocalDate } from "@lcc/shared";
 import { ASSIGNMENT_TYPE_LABEL, DifficultyBadge, MasteryBadge, OutcomeBadge } from "@/components/badges";
 import { PracticeButton } from "@/components/practice";
@@ -12,6 +12,7 @@ export const metadata = { title: "Review queue" };
 
 export default function ReviewsPage() {
   const q = getReviewQueue(db());
+  const showPatterns = getAppSettings(db()).showPatterns;
   const notScheduled = q.dueNow.filter((r) => !r.openAssignment).length;
   return (
     <div className="space-y-6">
@@ -38,8 +39,8 @@ export default function ReviewsPage() {
                     <DifficultyBadge d={r.problem.difficulty} />
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <span>{r.problem.patterns[0]}</span>
-                    <span>· due {r.due.nextDueDate}</span>
+                    {showPatterns && r.problem.patterns[0] ? <span>{r.problem.patterns[0]} ·</span> : null}
+                    <span>due {r.due.nextDueDate}</span>
                     {r.daysOverdue ? <Badge tone="warn">{r.daysOverdue}d overdue</Badge> : <Badge tone="neutral">due today</Badge>}
                     <span>· interval {r.due.intervalDays}d</span>
                     {r.due.lapses ? <span>· {r.due.lapses} lapse(s)</span> : null}

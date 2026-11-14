@@ -7,6 +7,7 @@ import { ProblemNoteField } from "@/components/autosave";
 import { ASSIGNMENT_TYPE_LABEL, DifficultyBadge, MasteryBadge, OutcomeBadge, SessionTypeBadge, VerdictBadge } from "@/components/badges";
 import { ProblemCharts } from "@/components/charts";
 import { CodeDiff, type CodeVersion } from "@/components/code";
+import { SpoilerReveal } from "@/components/patterns-toggle";
 import { PracticeButton } from "@/components/practice";
 import { DeleteSessionButton, EditSessionForm, LogPastAttempt, PatternsEditor, ScheduleButtons } from "@/components/problem-actions";
 import { LinkSubmission, SubmissionList } from "@/components/session";
@@ -38,7 +39,7 @@ export default async function ProblemPage({ params }: { params: Promise<{ slug: 
   const detail = getProblemDetail(d, slug);
   if (!detail) notFound();
   const { problem: p, stats, reviewState: rs, notes, sessions, today } = detail;
-  const tz = getAppSettings(d).timeZone;
+  const { timeZone: tz, showPatterns } = getAppSettings(d);
   const completed = sessions.filter((s) => s.status === "completed");
   const series = problemPerformanceSeries(sessions);
   const open = sessions.find((s) => ["in_progress", "paused", "not_started"].includes(s.status));
@@ -85,14 +86,16 @@ export default async function ProblemPage({ params }: { params: Promise<{ slug: 
             <PracticeButton problemId={p.id} label={completed.length ? "Practice again" : "Start"} resume={!!open} size="md" />
           </div>
         </div>
-        <PatternsEditor problemId={p.id} patterns={p.patterns} suggestions={allPatterns} />
-        <div className="flex flex-wrap gap-1">
-          {p.topics.map((t) => (
-            <span key={t.slug} className="text-[11px] text-subtle">
-              {t.name}
-            </span>
-          )).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, <span key={`d${i}`} className="text-[11px] text-subtle">·</span>, el] : [el]), [])}
-        </div>
+        <SpoilerReveal shown={showPatterns} label="Show patterns & tags">
+          <PatternsEditor problemId={p.id} patterns={p.patterns} suggestions={allPatterns} />
+          <div className="flex flex-wrap gap-1">
+            {p.topics.map((t) => (
+              <span key={t.slug} className="text-[11px] text-subtle">
+                {t.name}
+              </span>
+            )).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, <span key={`d${i}`} className="text-[11px] text-subtle">·</span>, el] : [el]), [])}
+          </div>
+        </SpoilerReveal>
       </header>
 
       <div className="grid gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-5">

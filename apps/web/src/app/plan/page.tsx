@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getActivePlan, getQueue, getUpcoming, listSkipDates, listStudyLists, practicedProblemIds, queueCounts, todayFor } from "@lcc/db";
+import { getActivePlan, getAppSettings, getQueue, getUpcoming, listSkipDates, listStudyLists, practicedProblemIds, queueCounts, todayFor } from "@lcc/db";
 import { formatLocalDate } from "@lcc/shared";
 import { DifficultyBadge } from "@/components/badges";
 import { CreatePlanForm } from "@/components/create-plan-form";
@@ -38,6 +38,7 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
   const counts = queueCounts(d, plan.id);
   const upcoming = getUpcoming(d, 14);
   const skips = listSkipDates(d, plan);
+  const showPatterns = getAppSettings(d).showPatterns;
   const practiced = practicedProblemIds(d);
   const shown = queue.filter((q) => (show === "all" ? true : show === "skipped" ? q.status === "skipped_practiced" || q.status === "removed" : q.status === "pending"));
   const pendingIdx = new Map(queue.filter((q) => q.status === "pending").map((q, i) => [q.problemId, i + 1]));
@@ -128,7 +129,7 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
                 {q.title}
               </Link>
               <DifficultyBadge d={q.difficulty} className="w-14" />
-              <span className="hidden w-40 truncate text-xs text-muted md:inline">{q.patterns[0]}</span>
+              {showPatterns ? <span className="hidden w-40 truncate text-xs text-muted md:inline">{q.patterns[0]}</span> : null}
               <span className="hidden w-32 text-xs text-subtle sm:inline">{q.listName ?? (q.addedManually ? "Added" : "")}</span>
               {q.status !== "pending" ? <Badge tone={q.status === "done" ? "good" : "outline"}>{STATUS_LABEL[q.status]}</Badge> : null}
               {q.addedManually && q.status === "pending" && practiced.has(q.problemId) ? <Badge tone="accent">As new</Badge> : null}

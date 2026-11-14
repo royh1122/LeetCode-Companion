@@ -90,6 +90,8 @@ export const appSettingsSchema = z.object({
   idleThresholdSec: z.number().int().min(30).max(3600),
   /** Open sessions with no activity for this long are flagged "interrupted". */
   staleSessionHours: z.number().int().min(1).max(168),
+  /** Show a problem's pattern/topic in lists (Today, Plan, Reviews, Library). Off by default: it's a hint. */
+  showPatterns: z.boolean(),
 });
 export type AppSettings = z.infer<typeof appSettingsSchema>;
 
@@ -100,5 +102,6 @@ export function defaultAppSettings(timeZone?: string): AppSettings {
     mastery: DEFAULT_MASTERY_SETTINGS,
     idleThresholdSec: 300,
     staleSessionHours: 6,
+    showPatterns: false,
   };
 }

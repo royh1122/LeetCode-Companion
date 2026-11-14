@@ -1,10 +1,11 @@
 import { AlertTriangle, CalendarOff, Coffee, Inbox, PauseCircle, PlayCircle } from "lucide-react";
 import Link from "next/link";
-import { getProblemById, getTodayView, listStudyLists, type TodayItem } from "@lcc/db";
+import { getAppSettings, getProblemById, getTodayView, listStudyLists, type TodayItem } from "@lcc/db";
 import { builtInListsFor } from "@/lib/lists";
 import { formatLocalDate } from "@lcc/shared";
 import { CreatePlanForm } from "@/components/create-plan-form";
 import { ImportListForm } from "@/components/import-list-form";
+import { PatternsToggle } from "@/components/patterns-toggle";
 import { QuestionRow } from "@/components/question-row";
 import { DoMoreToday, SkipTodayButton } from "@/components/plan-controls";
 import { Badge, Card, CardHeader, EmptyState, Progress, buttonVariants } from "@/components/ui";
@@ -13,7 +14,7 @@ import { relativeTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-function Section({ title, description, items, today, empty, accent, actions }: { title: string; description: string; items: TodayItem[]; today: string; empty: string; accent?: string; actions?: React.ReactNode }) {
+function Section({ title, description, items, today, showPatterns, empty, accent, actions }: { title: string; description: string; items: TodayItem[]; today: string; showPatterns: boolean; empty: string; accent?: string; actions?: React.ReactNode }) {
   const done = items.filter((i) => i.assignment.status === "completed").length;
   return (
     <Card>
@@ -33,7 +34,7 @@ function Section({ title, description, items, today, empty, accent, actions }: {
       {items.length ? (
         <ul className="divide-y divide-border">
           {items.map((i) => (
-            <QuestionRow key={i.assignment.id} item={i} today={today} />
+            <QuestionRow key={i.assignment.id} item={i} today={today} showPatterns={showPatterns} />
           ))}
         </ul>
       ) : (
@@ -80,6 +81,7 @@ export default function TodayPage() {
   const { progress, sections } = v;
   const openSessions = v.openSessions.map((s) => ({ s, p: getProblemById(d, s.problemId)! }));
   const interruptedIds = new Set(v.interrupted.map((s) => s.id));
+  const showPatterns = getAppSettings(d).showPatterns;
 
   return (
     <div className="space-y-6">
@@ -97,6 +99,7 @@ export default function TodayPage() {
             {v.isSkipped ? <Badge tone="outline">Day skipped</Badge> : null}
             {v.lightDay != null ? <Badge tone="outline">Light day · {v.lightDay} new, no automatic reviews</Badge> : null}
             {v.isReviewDay ? <Badge tone="accent">Review day</Badge> : null}
+            <PatternsToggle shown={showPatterns} />
           </p>
         </div>
         <div className="grid w-full grid-cols-2 gap-x-6 gap-y-3 sm:w-auto sm:grid-cols-4 [&>*]:min-w-32">
@@ -177,6 +180,7 @@ export default function TodayPage() {
         description="First encounters from your plan queue, plus anything you added."
         items={sections.newQuestions}
         today={v.today}
+        showPatterns={showPatterns}
         accent="var(--series-1)"
         actions={v.weekNew && v.plan.status === "active" && !v.notStartedYet ? <DoMoreToday remaining={v.weekNew.remaining} behind={v.weekNew.behind} lightens={v.weekNew.lightens} /> : null}
         empty={v.isReviewDay ? "No new questions on review days." : v.isSkipped ? "You skipped today — your place in the queue is kept." : v.plan.status === "paused" ? "Plan is paused." : "No new questions today."}
@@ -186,6 +190,7 @@ export default function TodayPage() {
         description="Fixed review of this week's cohort — separate from adaptive reviews."
         items={sections.mandatory}
         today={v.today}
+        showPatterns={showPatterns}
         accent="var(--series-2)"
         empty={v.isReviewDay ? "This week's cohort is fully assigned." : "Mandatory reviews happen on review days (Saturday & Sunday by default)."}
       />
@@ -194,6 +199,7 @@ export default function TodayPage() {
         description="Adaptive reviews due today, weakest and most overdue first (capped per day)."
         items={sections.srs}
         today={v.today}
+        showPatterns={showPatterns}
         accent="var(--series-3)"
         empty={v.lightDay != null && v.backlog.due ? "Light day: no reviews picked automatically. They stay due — pull some from the Review queue if you have time." : v.backlog.due ? "Today's cap is reached or the remaining due reviews are already scheduled. See the Review queue to pull more." : "Nothing due. Nice."}
       />

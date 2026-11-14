@@ -26,7 +26,8 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
     practiced: (sp.practiced as LibraryFilters["practiced"]) || undefined,
     sort: (sp.sort as LibraryFilters["sort"]) || undefined,
   };
-  const rows = searchLibrary(d, getAppSettings(d), filters);
+  const settings = getAppSettings(d);
+  const rows = searchLibrary(d, settings, filters);
   const lists = listStudyLists(d);
   const { patterns, topics } = allPatternsAndTopics(d);
   const today = todayFor(d);
@@ -120,7 +121,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-2 py-2 font-medium">Title</th>
                 <th className="px-2 py-2 font-medium">Difficulty</th>
-                <th className="px-2 py-2 font-medium">Pattern</th>
+                {settings.showPatterns ? <th className="px-2 py-2 font-medium">Pattern</th> : null}
                 <th className="px-2 py-2 font-medium">Mastery</th>
                 <th className="px-2 py-2 font-medium">Last result</th>
                 <th className="px-2 py-2 text-right font-medium">Sessions</th>
@@ -142,7 +143,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
                   <td className="px-2 py-2">
                     <DifficultyBadge d={p.difficulty} />
                   </td>
-                  <td className="max-w-40 truncate px-2 py-2 text-xs text-muted">{p.patterns[0]}</td>
+                  {settings.showPatterns ? <td className="max-w-40 truncate px-2 py-2 text-xs text-muted">{p.patterns[0]}</td> : null}
                   <td className="px-2 py-2">
                     <MasteryBadge m={s.mastery} title={s.masteryReason} />
                   </td>
