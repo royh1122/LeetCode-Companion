@@ -57,8 +57,11 @@ function hasCompletedHistory(db: Db, problemId: number, excludeSessionId?: strin
 
 const TYPE_PRIORITY: Record<string, number> = { new: 0, weekend_review: 1, srs_review: 2, manual: 3 };
 
-/** The open assignment a session for this problem should count toward (if any, due today or earlier). */
-function findAssignmentFor(db: Db, problemId: number, today: LocalDate): Assignment | null {
+/**
+ * The open assignment a session for this problem should count toward (if any, due today or
+ * earlier): a new question first, then a weekend review, a review pick, a manual task.
+ */
+export function findAssignmentFor(db: Db, problemId: number, today: LocalDate): Assignment | null {
   const open = db
     .select()
     .from(assignments)
@@ -314,10 +317,22 @@ export function recommendNextReview(db: Db, problemId: number, outcome: Outcome,
   return { date: next.nextDueDate!, intervalDays: next.intervalDays };
 }
 
+/**
+ * A postponement stands until a session that ended after it was set. Logging an older attempt
+ * (or an offline finish that arrives late) leaves it in place. The review state's `updatedAt`
+ * marks when the postponement was set: nothing else touches that row between sessions.
+ */
+function clearPostponementIfSuperseded(db: Db, problemId: number, endedAt: number) {
+  const rs = db.select().from(reviewState).where(eq(reviewState.problemId, problemId)).get();
+  if (rs?.postponedTo && endedAt >= rs.updatedAt) db.update(reviewState).set({ postponedTo: null }).where(eq(reviewState.problemId, problemId)).run();
+}
+
 function completeAssignmentsFor(db: Db, session: Session, endedAt: number, endedDate: LocalDate) {
   const ids: number[] = [];
   if (session.assignmentId != null) ids.push(session.assignmentId);
-  // Other open *review* tasks for this problem due by today are covered by this session.
+  // Every other open task for this problem due by that day is covered by this session too. That
+  // includes a new question assigned after the session had already started (e.g. the problem was
+  // opened on LeetCode before the dashboard allocated the day).
   const others = db
     .select()
     .from(assignments)
@@ -325,7 +340,7 @@ function completeAssignmentsFor(db: Db, session: Session, endedAt: number, ended
       and(
         eq(assignments.problemId, session.problemId),
         inArray(assignments.status, ["pending", "in_progress"]),
-        inArray(assignments.type, ["weekend_review", "srs_review", "manual"]),
+        inArray(assignments.type, ["new", "weekend_review", "srs_review", "manual"]),
         lte(assignments.scheduledDate, endedDate),
       ),
     )
@@ -407,8 +422,8 @@ export function finishSession(db: Db, id: string, reflection: Reflection, endedA
       })
       .where(eq(sessions.id, id))
       .run();
-    // A new session supersedes any earlier postponement.
-    tx.update(reviewState).set({ postponedTo: null }).where(eq(reviewState.problemId, s.problemId)).run();
+    // A session after the postponement supersedes it.
+    clearPostponementIfSuperseded(tx, s.problemId, end);
     const fresh = getSession(tx, id)!;
     fillEmptyProblemComplexity(tx, fresh);
     completeAssignmentsFor(tx, fresh, end, endedDate);
@@ -448,6 +463,8 @@ export function editCompletedSession(
   db.transaction((tx) => {
     const s = getSession(tx, id);
     if (!s) throw new DomainError("not_found", "Session not found");
+    // An outcome belongs to a finished attempt; an open one gets it from Finish.
+    if (patch.outcome !== undefined && s.status !== "completed") throw new DomainError("not_completed", "Only a completed session has an outcome to edit");
     tx.update(sessions).set({ ...patch, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
     if (patch.outcome && s.status === "completed" && patch.outcome !== s.outcome) recomputeReviewState(tx, s.problemId, getAppSettings(tx), id);
     bumpRevision(tx);
@@ -548,7 +565,7 @@ export function logManualAttempt(
       .get();
     const rec = recommendNextReview(tx, input.problemId, input.outcome, input.date);
     tx.update(sessions).set({ recommendedReviewDate: rec.date, nextReviewDate: rec.date }).where(eq(sessions.id, session.id)).run();
-    tx.update(reviewState).set({ postponedTo: null }).where(eq(reviewState.problemId, input.problemId)).run();
+    clearPostponementIfSuperseded(tx, input.problemId, endedAt);
     completeAssignmentsFor(tx, { ...session }, endedAt, input.date);
     recomputeReviewState(tx, input.problemId, settings);
     bumpRevision(tx);
@@ -557,8 +574,9 @@ export function logManualAttempt(
 }
 
 /** Postpone a problem's next review (keeps history; a later session supersedes it). */
-export function postponeReview(db: Db, problemId: number, to: LocalDate) {
+export function postponeReview(db: Db, problemId: number, to: LocalDate, now = Date.now()) {
   db.transaction((tx) => {
+    if (to < toLocalDate(now, getAppSettings(tx).timeZone)) throw new DomainError("past_date", "Pick today or a later day.");
     const rs = tx.select().from(reviewState).where(eq(reviewState.problemId, problemId)).get();
     if (!rs) throw new DomainError("no_review_state", "Problem has no review history yet");
     tx.update(reviewState).set({ nextDueDate: to, postponedTo: to, updatedAt: Date.now() }).where(eq(reviewState.problemId, problemId)).run();

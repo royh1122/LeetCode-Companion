@@ -51,6 +51,8 @@ import {
   updateSessionNotes,
   getExtensionSessionState,
   getRevision,
+  getExtensionContext,
+  postponeReview,
 } from "../src";
 import { at, freshDb, TZ } from "./helpers";
 
@@ -131,6 +133,130 @@ describe("seed / problem identity", () => {
     expect(getProblemBySlug(db, "valid-anagram")).toMatchObject({ difficulty: "Easy", patterns: ["Warm-up", "G"] });
     expect(() => parseListText("Two Sum", "x")).toThrow(/Line 1/);
     expect(() => createPlan(freshDb({ seed: false }), {})).toThrow(/Import a question list/);
+  });
+});
+
+describe("scheduling edge cases", () => {
+  const TUE = addDays(MON, 1);
+  const WED = addDays(MON, 2);
+
+  it("a question opened before the day was allocated still counts as done when finished", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 7));
+    // On LeetCode before opening the dashboard: the session starts with no task to link to.
+    const first = pendingQueue(db, plan.id)[0]!;
+    const { session } = startSession(db, { problemId: first.problemId, origin: "extension", startedAt: at(MON, 7, 30) }, at(MON, 7, 30));
+    expect(session.assignmentId).toBeNull();
+    // Opening the dashboard then assigns the same question as today's new question.
+    const task = getTodayView(db, at(MON, 8)).sections.newQuestions.find((i) => i.problem.id === first.problemId)!;
+    expect(task.assignment.status).toBe("pending");
+    finishSession(db, session.id, { outcome: "independent", hintsUsed: false }, at(MON, 9));
+    const after = getTodayView(db, at(MON, 10)).sections.newQuestions.find((i) => i.problem.id === first.problemId)!;
+    expect(after.assignment.status).toBe("completed");
+    expect(getQueue(db, plan.id).find((q) => q.problemId === first.problemId)!.status).toBe("done");
+    // Not carried over on Tuesday, and it is in Saturday's weekend review.
+    expect(getTodayView(db, at(TUE, 8)).sections.newQuestions.some((i) => i.problem.id === first.problemId)).toBe(false);
+    expect(getTodayView(db, at(addDays(MON, 5), 8)).sections.mandatory.map((i) => i.problem.id)).toEqual([first.problemId]);
+  });
+
+  it("only this week's plan questions wait for the weekend review; free practice is reviewed the next day", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const mon = getTodayView(db, at(MON, 8)).sections.newQuestions;
+    solveAll(db, mon.slice(0, 1), MON, "failed");
+    // A problem far down the queue, practised on Monday outside the plan.
+    const other = pendingQueue(db, plan.id).at(-1)!.problemId;
+    logManualAttempt(db, { problemId: other, date: MON, outcome: "failed" });
+    const tue = getTodayView(db, at(TUE, 8));
+    expect(tue.sections.srs.map((i) => i.problem.id)).toEqual([other]);
+    // The early-review list follows the same rule.
+    const db2 = freshDb();
+    createPlan(db2, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const m2 = getTodayView(db2, at(MON, 8)).sections.newQuestions;
+    solveAll(db2, m2.slice(0, 1), MON, "struggled"); // due Thursday, covered by the weekend review
+    const p2 = getProblemBySlug(db2, "two-sum")!;
+    logManualAttempt(db2, { problemId: p2.id, date: MON, outcome: "struggled" }); // due Thursday too
+    const early = getReviewQueue(db2, at(TUE, 9)).earlyAvailable;
+    expect(early).toContain(p2.id);
+    expect(early).not.toContain(m2[0]!.problem.id);
+  });
+
+  it("an archived plan's leftover new questions don't shrink the new plan's days", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    expect(getTodayView(db, at(MON, 8)).sections.newQuestions).toHaveLength(5);
+    const next = createPlan(db, { startDate: TUE, timeZone: TZ }, at(TUE, 7));
+    const tue = getTodayView(db, at(TUE, 8)).sections.newQuestions;
+    expect(tue.filter((i) => i.assignment.planId === next.id)).toHaveLength(5);
+  });
+
+  it("a postponement stays when an older attempt is logged; a later session replaces it", () => {
+    const db = freshDb();
+    const p = getProblemBySlug(db, "two-sum")!;
+    const now = Date.now();
+    const today = toLocalDate(now, TZ);
+    logManualAttempt(db, { problemId: p.id, date: addDays(today, -3), outcome: "independent" });
+    const far = addDays(today, 40);
+    postponeReview(db, p.id, far, now);
+    // A forgotten attempt from two weeks ago is logged afterwards: still postponed.
+    logManualAttempt(db, { problemId: p.id, date: addDays(today, -14), outcome: "independent" });
+    expect(getProblemDetail(db, "two-sum", now)!.reviewState).toMatchObject({ postponedTo: far, nextDueDate: far });
+    // Practising it now does replace the postponement.
+    const s = startSession(db, { problemId: p.id, origin: "dashboard" }, now + 60_000).session;
+    finishSession(db, s.id, { outcome: "independent", hintsUsed: false }, now + 120_000);
+    const rs = getProblemDetail(db, "two-sum", now + 120_000)!.reviewState!;
+    expect(rs.postponedTo).toBeNull();
+    expect(rs.nextDueDate! < far).toBe(true);
+  });
+
+  it("refuses past dates for reschedule and postpone, and light days as heavy as a normal day", () => {
+    const db = freshDb();
+    const plan = createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const a = getTodayView(db, at(TUE, 8)).sections.newQuestions[0]!;
+    expect(() => rescheduleAssignment(db, a.assignment.id, MON, at(TUE, 9))).toThrow(/today or a later day/);
+    rescheduleAssignment(db, a.assignment.id, TUE, at(TUE, 9)); // today is fine
+    const p = getProblemBySlug(db, "two-sum")!;
+    logManualAttempt(db, { problemId: p.id, date: MON, outcome: "independent" });
+    expect(() => postponeReview(db, p.id, MON, at(TUE, 9))).toThrow(/today or a later day/);
+    expect(() => setDayMode(db, plan.id, WED, { mode: "light", newQuota: 5 }, at(TUE, 9))).toThrow(/0 to 4/);
+    setDayMode(db, plan.id, WED, { mode: "light", newQuota: 4 }, at(TUE, 9));
+    expect(getLightDays(db, plan.id).get(WED)).toBe(4);
+    // A refused change leaves the day as it was.
+    expect(() => setDayMode(db, plan.id, WED, { mode: "light", newQuota: 9 }, at(TUE, 9))).toThrow();
+    expect(getLightDays(db, plan.id).get(WED)).toBe(4);
+  });
+
+  it("the extension is told about the same task a session would count toward", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const p = getProblemBySlug(db, "two-sum")!;
+    addAssignment(db, p.id, MON); // a manual task from yesterday
+    addAssignment(db, p.id, TUE, { asNew: true });
+    expect(getExtensionContext(db, "two-sum", "http://127.0.0.1:4317", at(TUE, 9)).todayAssignment).toMatchObject({ type: "new" });
+    expect(startSession(db, { problemId: p.id, origin: "extension" }, at(TUE, 9)).session.type).toBe("first_attempt");
+  });
+
+  it("an open session has no outcome to edit", () => {
+    const db = freshDb();
+    const p = getProblemBySlug(db, "two-sum")!;
+    const s = startSession(db, { problemId: p.id, origin: "dashboard" }, at(MON, 9)).session;
+    expect(() => editCompletedSession(db, s.id, { outcome: "easy" })).toThrow(/completed/);
+    editCompletedSession(db, s.id, { notes: "still fine" });
+    expect(getProblemDetail(db, "two-sum")!.sessions[0]).toMatchObject({ status: "in_progress", outcome: null, notes: "still fine" });
+  });
+
+  it("the plan forecast doesn't count next week's questions in this week's weekend review", () => {
+    const db = freshDb();
+    createPlan(db, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    solveAll(db, getTodayView(db, at(MON, 8)).sections.newQuestions, MON);
+    solveAll(db, getTodayView(db, at(TUE, 8)).sections.newQuestions, TUE);
+    // A question placed on next Tuesday ahead of time.
+    const later = pendingQueue(db, getActivePlan(db)!.id).at(-1)!.problemId;
+    addAssignment(db, later, addDays(MON, 8), { asNew: true });
+    // From Wednesday: Wed 5, Thu 5, Fri 5 on top of the 10 done → Sat 12, Sun 13.
+    const days = getUpcoming(db, 4, at(TUE, 20)).days;
+    expect(days.map((d) => d.mandatoryReviews)).toEqual([0, 0, 0, 12]);
+    expect(getUpcoming(db, 5, at(TUE, 20)).days[4]!.mandatoryReviews).toBe(13);
   });
 });
 

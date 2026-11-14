@@ -20,6 +20,8 @@ import {
 export interface OpenAssignment {
   id: number;
   problemId: number;
+  /** The plan it belongs to (null = added without a plan). Omitted = treated as the current plan's. */
+  planId?: number | null;
   type: AssignmentType;
   scheduledDate: LocalDate;
   /** First date it was scheduled for. Defaults to `scheduledDate`. */
@@ -102,7 +104,8 @@ export interface DueReview {
 
 export interface PlanDayInput {
   today: LocalDate;
-  plan: { status: "active" | "paused" | "archived"; startDate: LocalDate; settings: PlanSettings };
+  /** `id` limits carried-over counting to this plan's own new questions. */
+  plan: { id?: number; status: "active" | "paused" | "archived"; startDate: LocalDate; settings: PlanSettings };
   isSkipped: boolean;
   /** Whether today's new-question / SRS allocation already ran (per plan, per date). */
   allocated: { newQuestions: boolean; srs: boolean };
@@ -114,7 +117,7 @@ export interface PlanDayInput {
   openAssignments: OpenAssignment[];
   /** Problems that already got a weekend_review assignment for this week's cohort (any status). */
   weekReviewAssigned: ReadonlySet<number>;
-  /** New-question assignments completed this week before today, in completion order. */
+  /** New-question assignments completed this week before today, in completion order (this week's cohort). */
   cohort: { problemId: number; completedDate: LocalDate }[];
   /** Problems whose SRS due date ≤ today. */
   dueReviews: DueReview[];
@@ -156,6 +159,33 @@ export function weekendReviewTarget(settings: PlanSettings, today: LocalDate): n
 export function hasUpcomingReviewDay(settings: PlanSettings, today: LocalDate): boolean {
   const idx = mondayIndex(today);
   return settings.reviewDays.some((r) => (r.weekday + 6) % 7 >= idx);
+}
+
+/**
+ * Cohort problems that a weekend review will still cover: no weekend review yet this week, and
+ * a review day of this week that is after the day they were finished and not before today.
+ * Only these wait for the weekend review instead of getting a spaced-repetition pick; anything
+ * else practised this week (free practice, a review, a question finished on the last review day)
+ * is reviewed normally.
+ */
+export function awaitingWeekendReview(
+  settings: PlanSettings,
+  today: LocalDate,
+  cohort: readonly { problemId: number; completedDate: LocalDate }[],
+  weekReviewAssigned: ReadonlySet<number>,
+): Set<number> {
+  const idx = mondayIndex(today);
+  const weekStart = startOfWeek(today);
+  const out = new Set<number>();
+  for (const c of cohort) {
+    if (weekReviewAssigned.has(c.problemId) || c.completedDate < weekStart) continue;
+    const done = mondayIndex(c.completedDate);
+    if (settings.reviewDays.some((r) => {
+      const day = (r.weekday + 6) % 7;
+      return day > done && day >= idx;
+    })) out.add(c.problemId);
+  }
+  return out;
 }
 
 export function srsPriority(r: DueReview, today: LocalDate): number {
@@ -201,10 +231,11 @@ export function planDay(input: PlanDayInput): PlanDayResult {
     const already = input.weekReviewAssigned.size;
     const available = input.cohort
       .filter((c) => !input.weekReviewAssigned.has(c.problemId))
-      .filter((c, i, arr) => arr.findIndex((x) => x.problemId === c.problemId) === i);
+      .filter((c, i, arr) => arr.findIndex((x) => x.problemId === c.problemId) === i)
+      // Already on the list (e.g. carried over): no duplicate, and it doesn't use up a slot.
+      .filter((c) => !openByProblem.has(c.problemId));
     const n = Math.max(0, Math.min(available.length, target - already));
     for (const c of available.slice(0, n)) {
-      if (openByProblem.has(c.problemId)) continue; // already on the list (e.g. carried over) — no duplicate
       result.createWeekendReview.push(c.problemId);
       claim(c.problemId);
     }
@@ -214,9 +245,11 @@ export function planDay(input: PlanDayInput): PlanDayResult {
   if (!input.allocated.newQuestions && !input.isSkipped) {
     const quota = s.newPerWeekday[weekdayOf(today)] ?? 0;
     const share = input.lightNewQuota == null ? quota : Math.max(0, Math.min(quota, input.lightNewQuota));
-    // Carried over from earlier days, or rescheduled into today from an earlier date.
+    // Carried over from earlier days, or rescheduled into today from an earlier date. Only this
+    // plan's: an archived plan's leftovers must not keep shrinking the new plan's days.
+    const ownPlan = (a: OpenAssignment) => plan.id == null || a.planId === undefined || a.planId === plan.id;
     const carried = input.openAssignments.filter(
-      (a) => a.type === "new" && (a.scheduledDate < today || (a.scheduledDate === today && (a.originalDate ?? a.scheduledDate) < today)),
+      (a) => a.type === "new" && ownPlan(a) && (a.scheduledDate < today || (a.scheduledDate === today && (a.originalDate ?? a.scheduledDate) < today)),
     ).length;
     const pull = newQuestionPull({
       share,
@@ -241,15 +274,14 @@ export function planDay(input: PlanDayInput): PlanDayResult {
 
   // 3. Adaptive SRS reviews, once per day, capped.
   if (!input.allocated.srs) {
-    const weekStart = startOfWeek(today);
-    const upcomingMandatory = hasUpcomingReviewDay(s, today);
+    // This week's cohort is covered by the upcoming mandatory review — don't double-book it.
+    const waits = awaitingWeekendReview(s, today, input.cohort, input.weekReviewAssigned);
     // A light day picks no reviews: they stay due (and show as overdue tomorrow), nothing is postponed.
     const cap = input.lightNewQuota != null ? 0 : isReviewDay(s, today) ? s.srsReviewDayCap : s.srsDailyCap;
     const candidates = input.dueReviews.filter((r) => {
       if (r.nextDueDate > today) return false;
       if (openByProblem.has(r.problemId)) return false;
-      // This week's cohort is covered by the upcoming mandatory review — don't double-book it.
-      if (upcomingMandatory && r.firstPracticedDate && r.firstPracticedDate >= weekStart) return false;
+      if (waits.has(r.problemId)) return false;
       return true;
     });
     for (const r of rankDueReviews(candidates, today).slice(0, cap)) {
@@ -295,6 +327,12 @@ export function forecast(opts: {
   weekAssignedBefore?: number;
   /** Persisted future new questions per date: first scheduled for that day (`own`) or moved there from an earlier day (`inbound`). */
   persisted?: ReadonlyMap<LocalDate, { own: number; inbound: number }>;
+  /**
+   * Persisted future new questions per date they were first scheduled for (wherever they sit
+   * now). The week target counts them there, as the real allocation does; one moved from a
+   * future day to a later one still uses up its original day's week. Omitted = `persisted.own`.
+   */
+  originals?: ReadonlyMap<LocalDate, number>;
 }): ForecastDay[] {
   const out: ForecastDay[] = [];
   const adj: DayAdjustments = { startDate: opts.startDate, skipDates: opts.skipDates, lightDays: opts.lightDays };
@@ -318,20 +356,22 @@ export function forecast(opts: {
       reviewed += mandatory;
     }
     const p = opts.persisted?.get(date) ?? { own: 0, inbound: 0 };
+    // Like the real allocation: questions first scheduled for this day count as its own, wherever they sit now.
+    const own = opts.originals ? (opts.originals.get(date) ?? 0) : p.own;
     const pull = skipped
       ? 0
       : newQuestionPull({
           share: dayNewShare(opts.settings, date, adj),
           cumShare: weekCapped ? cumulativeNewShare(opts.settings, date, adj) : Number.POSITIVE_INFINITY,
           weekAssignedBefore: assigned,
-          ownToday: p.own,
+          ownToday: own,
           carriedIn: p.inbound,
           carryOverReducesNew: opts.settings.carryOverReducesNew,
         });
     const ids = opts.queue.slice(qi, qi + pull);
     qi += ids.length;
     cohort += ids.length;
-    assigned += ids.length + p.own;
+    assigned += ids.length + own;
     const light = opts.lightDays?.get(date);
     out.push({ date, newProblemIds: ids, mandatoryReviews: mandatory, skipped, lightNew: light == null ? null : light });
   }

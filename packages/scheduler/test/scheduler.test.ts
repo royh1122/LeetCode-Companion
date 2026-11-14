@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MASTERY_SETTINGS, DEFAULT_PLAN_SETTINGS, DEFAULT_SRS_SETTINGS, addDays, weekdayOf, type PlanSettings } from "@lcc/shared";
-import { computeMastery, computeNextReview, cumulativeNewShare, dayNewShare, forecast, newQuestionPull, planDay, rankDueReviews, weekendReviewTarget, weeklyNewTarget, type PlanDayInput } from "../src";
+import { awaitingWeekendReview, computeMastery, computeNextReview, cumulativeNewShare, dayNewShare, forecast, newQuestionPull, planDay, rankDueReviews, weekendReviewTarget, weeklyNewTarget, type PlanDayInput } from "../src";
 
 const MON = "2026-11-09";
 
@@ -156,12 +156,47 @@ describe("planDay", () => {
       ...Array.from({ length: 10 }, (_, i) => ({ problemId: 200 + i, nextDueDate: thu, intervalDays: 21, lapses: 0, lastOutcome: "easy" as const, firstPracticedDate: "2026-09-01" })),
     ];
     const open = [{ id: 9, problemId: 103, type: "manual" as const, scheduledDate: thu, status: "pending" as const }];
-    const r = planDay(input({ today: thu, dueReviews: due, openAssignments: open, allocated: { newQuestions: true, srs: false } }));
+    const cohort = [{ problemId: 102, completedDate: MON }];
+    const r = planDay(input({ today: thu, dueReviews: due, openAssignments: open, cohort, allocated: { newQuestions: true, srs: false } }));
     expect(r.createSrs).toHaveLength(5);
     expect(r.createSrs[0]).toBe(100); // 13 days overdue on a 7-day interval
     expect(r.createSrs[1]).toBe(101); // weak + lapses
     expect(r.createSrs).not.toContain(102);
     expect(r.createSrs).not.toContain(103);
+  });
+  it("SRS: only the cohort waits for the weekend review; anything else practised this week is reviewed normally", () => {
+    const tue = addDays(MON, 1);
+    const due = (problemId: number) => ({ problemId, nextDueDate: tue, intervalDays: 1, lapses: 0, lastOutcome: "failed" as const, firstPracticedDate: MON });
+    const pick = (over: Partial<PlanDayInput>) => planDay(input({ today: tue, allocated: { newQuestions: true, srs: false }, dueReviews: [due(1), due(2)], ...over })).createSrs;
+    // 1 was a plan question finished Monday (the weekend review covers it); 2 was free practice on Monday.
+    expect(pick({ cohort: [{ problemId: 1, completedDate: MON }] })).toEqual([2]);
+    // Once its weekend review was given (done Saturday, failed again → due Sunday), it is reviewed normally.
+    const sun = addDays(MON, 6);
+    const dueSun = (problemId: number) => ({ ...due(problemId), nextDueDate: sun });
+    expect(planDay(input({ today: sun, allocated: { newQuestions: true, srs: false }, dueReviews: [dueSun(1)], cohort: [{ problemId: 1, completedDate: MON }], weekReviewAssigned: new Set([1]) })).createSrs).toEqual([1]);
+    // A question finished on the last review day gets no weekend review, so it doesn't wait for one.
+    const satOnly: PlanSettings = { ...DEFAULT_PLAN_SETTINGS, reviewDays: [{ weekday: 6, quota: null }] };
+    const sat = addDays(MON, 5);
+    expect(awaitingWeekendReview(satOnly, sat, [{ problemId: 1, completedDate: sat }, { problemId: 2, completedDate: tue }], new Set())).toEqual(new Set([2]));
+    // Last week's questions never wait.
+    expect(awaitingWeekendReview(DEFAULT_PLAN_SETTINGS, tue, [{ problemId: 3, completedDate: addDays(MON, -3) }], new Set())).toEqual(new Set());
+  });
+  it("weekend review: a cohort problem already on the list doesn't use up a slot", () => {
+    const sat = addDays(MON, 5);
+    const cohort = Array.from({ length: 14 }, (_, i) => ({ problemId: i + 1, completedDate: MON }));
+    // Problem 1 still has an open task (e.g. a manual one): Saturday's 12 slots go to 2–13.
+    const open = [{ id: 1, problemId: 1, type: "manual" as const, scheduledDate: sat, status: "pending" as const }];
+    expect(planDay(input({ today: sat, cohort, openAssignments: open })).createWeekendReview).toEqual(Array.from({ length: 12 }, (_, i) => i + 2));
+  });
+  it("an archived plan's unfinished new questions don't shrink the new plan's days", () => {
+    const tue = addDays(MON, 1);
+    const old = [1, 2, 3].map((pid, i) => ({ id: i + 1, problemId: pid, planId: 7, type: "new" as const, scheduledDate: MON, status: "pending" as const }));
+    const queue = Array.from({ length: 20 }, (_, i) => ({ problemId: i + 10 }));
+    const plan = { id: 8, status: "active" as const, startDate: MON, settings: DEFAULT_PLAN_SETTINGS };
+    expect(planDay(input({ today: tue, plan, openAssignments: old, queue })).createNew).toHaveLength(5);
+    // The plan's own carried-over questions still take today's slots.
+    const own = old.map((a) => ({ ...a, planId: 8 }));
+    expect(planDay(input({ today: tue, plan, openAssignments: own, queue })).createNew).toHaveLength(2);
   });
   it("expires stale SRS picks so they get re-ranked instead of piling up", () => {
     const open = [{ id: 1, problemId: 5, type: "srs_review" as const, scheduledDate: addDays(MON, -1), status: "pending" as const }];
@@ -278,5 +313,33 @@ describe("weekly target", () => {
     // Weekend review covers 13 + 2 + 1 = 16 (Sat 12, Sun the rest).
     expect(fc[3]!.mandatoryReviews).toBe(12);
     expect(fc[4]!.mandatoryReviews).toBe(4);
+  });
+
+  it("forecast: a question moved from a future day to a later one still counts in its original day's week", () => {
+    const S = DEFAULT_PLAN_SETTINGS;
+    const tue = addDays(MON, 1);
+    const thu = addDays(MON, 3);
+    const fri = addDays(MON, 4);
+    // Mon and Tue got their 10. Thursday's question was placed ahead of time and then moved to Friday.
+    const run = (originals?: Map<string, number>) =>
+      forecast({
+        from: addDays(MON, 2),
+        days: 3,
+        settings: S,
+        queue: Array.from({ length: 60 }, (_, i) => i),
+        skipDates: new Set(),
+        startDate: MON,
+        cohortSoFar: 10,
+        reviewsAssignedThisWeek: 0,
+        weekAssignedBefore: 10,
+        persisted: new Map([[fri, { own: 0, inbound: 1 }]]),
+        originals,
+      }).map((d) => d.newProblemIds.length);
+    expect(tue < thu).toBe(true);
+    // As the real allocation will do: Wed 5, Thu 4 (the moved question still counts as Thursday's),
+    // Fri 4 (its 5th slot is taken by the moved one).
+    expect(run(new Map([[thu, 1]]))).toEqual([5, 4, 4]);
+    // Before: the moved question counted nowhere, so Thursday showed a full 5.
+    expect(run()).toEqual([5, 5, 4]);
   });
 });

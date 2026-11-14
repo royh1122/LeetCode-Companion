@@ -130,6 +130,7 @@ export function Reveal({
 export function ReflectionForm({
   sessionId,
   recommendations,
+  recommendationsAtLastActivity,
   today,
   hintsRevealed,
   timing,
@@ -138,6 +139,8 @@ export function ReflectionForm({
 }: {
   sessionId: string;
   recommendations: Record<Outcome, string>;
+  /** When an interrupted session would end on an earlier day: the dates counted from that day. */
+  recommendationsAtLastActivity?: Record<Outcome, string> | null;
   today: string;
   hintsRevealed: boolean;
   timing: SessionTiming;
@@ -157,7 +160,10 @@ export function ReflectionForm({
   const [endAtLastActivity, setEndAtLastActivity] = useState(interrupted);
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const rec = outcome ? recommendations[outcome] : null;
+  // The server counts the next review from the day the session ends, so show the same date.
+  const endsAtLastActivity = endAtLastActivity && !!timing.lastActivityAt;
+  const recs = endsAtLastActivity && recommendationsAtLastActivity ? recommendationsAtLastActivity : recommendations;
+  const rec = outcome ? recs[outcome] : null;
   const est = useMemo(() => {
     const end = endAtLastActivity && timing.lastActivityAt ? timing.lastActivityAt : Date.now();
     return effectiveDuration({ ...timing, endedAt: timing.endedAt ?? end }, end);
@@ -187,7 +193,9 @@ export function ReflectionForm({
           takeaway: takeaway || null,
           mistakes: mistakes || null,
           difficultyRating: rating,
-          nextReviewDate: reviewDate && reviewDate !== rec ? reviewDate : null,
+          // A date picked here is sent as picked; the server treats it as an override only if it
+          // differs from its own recommendation (so a stale page can't swap in a different date).
+          nextReviewDate: reviewDate,
           durationOverrideMs: durationMin ? Math.round(Number(durationMin) * 60_000) : null,
         },
         endAtLastActivity && timing.lastActivityAt ? timing.lastActivityAt : null,

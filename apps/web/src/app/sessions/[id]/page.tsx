@@ -36,7 +36,11 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   const open = ["in_progress", "paused", "not_started"].includes(s.status);
   const review = isReviewSessionType(s.type as SessionType) && previousSessions.length > 0;
   const interrupted = open && now - (s.lastActivityAt ?? s.startedAt) > settings.staleSessionHours * 3_600_000;
-  const recommendations = Object.fromEntries(OUTCOMES.map((o) => [o, recommendNextReview(d, p.id, o, today).date])) as Record<Outcome, string>;
+  const recommendFrom = (day: string) => Object.fromEntries(OUTCOMES.map((o) => [o, recommendNextReview(d, p.id, o, day).date])) as Record<Outcome, string>;
+  const recommendations = recommendFrom(today);
+  // An interrupted session can be ended at its last activity; the next review then counts from that day.
+  const lastActivityDay = interrupted && s.lastActivityAt ? toLocalDate(s.lastActivityAt, settings.timeZone) : null;
+  const recommendationsAtLastActivity = lastActivityDay && lastActivityDay !== today ? recommendFrom(lastActivityDay) : null;
   const timing = {
     startedAt: s.startedAt,
     endedAt: s.endedAt,
@@ -134,6 +138,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                   <ReflectionForm
                     sessionId={s.id}
                     recommendations={recommendations}
+                    recommendationsAtLastActivity={recommendationsAtLastActivity}
                     today={today}
                     hintsRevealed={s.revealedHints || s.revealedNotes || s.revealedCode}
                     timing={timing}

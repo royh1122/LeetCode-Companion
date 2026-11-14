@@ -19,7 +19,7 @@ The first time the dashboard is opened on a day, the scheduler runs these steps.
    - A problem gets at most one weekend review per cohort week (enforced by a unique index).
    - Unfinished mandatory reviews carry over until done, skipped or rescheduled.
 3. **New questions.** These are pulled from the top of the queue once per day (recorded in `plan_days`). How many is set by the weekly target (below): at most the day's share, `newPerWeekday[weekday]` (less on a light day, none on a skipped day).
-   - **Backlog policy (default):** carried-over unfinished new questions, and new questions rescheduled onto today from an earlier day, take today's slots, so the open new list never exceeds one day's quota. Missed days don't create debt, and your queue position only moves when questions are actually assigned.
+   - **Backlog policy (default):** carried-over unfinished new questions, and new questions rescheduled onto today from an earlier day, take today's slots, so the open new list never exceeds one day's quota. Missed days don't create debt, and your queue position only moves when questions are actually assigned. Only the active plan's questions count: an archived plan's leftovers don't shrink a new plan's days.
    - **Overlap policy (default `skip_practiced`):** a queue problem you already completed a session for (e.g. from an earlier list) is marked *skipped as practiced* instead of consuming quota. Use **Practice as new** on the Study plan page, or **Restart as new** on a question page, to opt in.
 4. **SRS reviews.** Problems whose next-review date is today or earlier, ranked by:
 
@@ -27,7 +27,7 @@ The first time the dashboard is opened on a day, the scheduler runs these steps.
 
    They are capped at `srsDailyCap` (default 5) or `srsReviewDayCap` on review days (default 3). The rest wait in the **Review queue**, where you can pull more into today. Excluded are:
    - problems with any open assignment, so a problem never has two tasks at once;
-   - this week's cohort while a mandatory review day is still ahead, because the weekend review covers them.
+   - this week's cohort that hasn't had its weekend review yet, while a review day after the day it was finished is still ahead, because the weekend review covers them. Anything else practised this week (free practice, a logged attempt, a question finished on the last review day) is reviewed normally.
 
 ## Weekly target and working ahead
 
@@ -43,7 +43,7 @@ The first time the dashboard is opened on a day, the scheduler runs these steps.
 - **Light day.** In the Study plan calendar, a future day can be made light: N new questions (0 up to one less than its quota) and no automatic spaced-repetition picks. Reviews due that day stay due and show as overdue the next day; nothing is postponed silently. You can still pull reviews from the Review queue.
 - **Skip a future day.** Same as skipping today: no new questions that day, and your place in the queue is kept.
 - **Not on review days.** Mandatory-review days can't be made light or skipped ahead of time, because their reviews would carry over onto Monday.
-- **Reviews early.** The Review queue can pull reviews due in the next 2 days into today. The next interval is computed from the day you actually do it. This week's new questions are left out while a review day is still ahead, because the weekend review covers them.
+- **Reviews early.** The Review queue can pull reviews due in the next 2 days into today. The next interval is computed from the day you actually do it. This week's cohort is left out on the same terms as the daily picks, because the weekend review covers it.
 
 ## Fixed weekend review vs. adaptive SRS
 
@@ -52,13 +52,13 @@ Both are kept and displayed in separate sections:
 - A mandatory review *is* a review. Completing it updates spaced-repetition state like any other session.
 - While a new problem's weekend review is pending, its SRS due date is ignored, so there is no double booking.
 - If a problem has both an open weekend review and is SRS-due, only the weekend review appears.
-- Finishing any review session also completes any other open review task for that problem due by that day.
+- Finishing any session also completes every other open task for that problem due by that day. That includes a new question assigned after the session started (for example, the problem was opened on LeetCode before the dashboard allocated the day).
 
 ## Skip, pause, reschedule
 
 - **Skip today.** No new questions are pulled today (future days: see Busy days ahead). Today's not-yet-started new questions return to the queue at their original position. You can un-skip the same day.
 - **Pause plan.** Nothing is allocated automatically. The review backlog stays visible.
-- **Reschedule.** A new or mandatory task moves to the chosen date. A new question moved onto a day takes one of that day's slots instead of adding to it. An SRS task instead postpones the problem's next-review date. Postponements are kept until a later session supersedes them.
+- **Reschedule.** A new or mandatory task moves to the chosen date (today or later). A new question moved onto a day takes one of that day's slots instead of adding to it. An SRS task instead postpones the problem's next-review date. A postponement is kept until a session that ended after it was set; logging an older attempt leaves it in place.
 - **Reorder queue.** Move items top, up, down or bottom; remove them; or add any problem by URL or slug, at the front or end, or to today as new.
 
 ## Spaced repetition

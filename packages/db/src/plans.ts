@@ -174,7 +174,10 @@ export function setDayMode(db: Db, planId: number, date: LocalDate, mode: DayMod
     }
     tx.delete(planSkips).where(and(eq(planSkips.planId, planId), eq(planSkips.date, date))).run();
     if (mode.mode === "light") {
-      const n = Math.max(0, Math.min(50, Math.floor(mode.newQuota)));
+      // Lighter than a normal day: 0 up to one less than the day's quota.
+      const quota = plan.settings.newPerWeekday[weekdayOf(date)] ?? 0;
+      const n = Math.floor(mode.newQuota);
+      if (!(n >= 0 && n < quota)) throw new DomainError("light_quota", quota > 0 ? `A light day has 0 to ${quota - 1} new questions.` : "This day has no new questions to lighten.");
       tx.insert(planLightDays).values({ planId, date, newQuota: n }).run();
     }
     bumpRevision(tx);
