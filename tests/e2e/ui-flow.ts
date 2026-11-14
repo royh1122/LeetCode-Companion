@@ -1,8 +1,10 @@
 /**
- * Dashboard E2E (no extension): create plan → start practice → notes autosave →
+ * Dashboard E2E (no extension): start practice → notes autosave →
  * finish with reflection → dashboard reflects it → history/detail/analytics render.
  * Requires a running dashboard on the e2e port (see port.ts) backed by an EMPTY data dir.
- *   npm run test:e2e starts one; or point LCC_URL at a dashboard you started yourself.
+ *   npm run test:e2e starts one and creates a plan with new questions every day
+ *   (setup-plan.ts), so this runs on any weekday. Without a plan, it creates one through
+ *   the form (default settings: no new questions on weekends).
  */
 import { chromium, expect, type Page } from "@playwright/test";
 import { E2E_BASE } from "./port";

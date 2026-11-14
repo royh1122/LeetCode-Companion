@@ -17,7 +17,9 @@ const args = process.argv.slice(2);
 const shotsIdx = args.indexOf("--shots");
 const shots = shotsIdx >= 0 ? args[shotsIdx + 1] : undefined;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-e2e-data-"));
-const env = { ...process.env, LCC_DATA_DIR: dataDir, LCC_URL: E2E_BASE, NEXT_TELEMETRY_DISABLED: "1" };
+// LCC_DB_PATH would take priority over the temporary data directory: never pass it on.
+const { LCC_DB_PATH: _dbPath, ...inherited } = process.env;
+const env = { ...inherited, LCC_DATA_DIR: dataDir, LCC_URL: E2E_BASE, NEXT_TELEMETRY_DISABLED: "1" };
 
 async function waitForServer(url: string, ms = 120_000) {
   const end = Date.now() + ms;
@@ -52,6 +54,8 @@ async function main() {
   run("npm run ext:build");
   execSync("npx tsx scripts/db.ts migrate", { cwd: root, env, stdio: "inherit" });
   execSync("npx tsx scripts/db.ts sample", { cwd: root, env, stdio: "inherit" });
+  // A plan with new questions every day, so the flows don't depend on the weekday.
+  execSync("npx tsx tests/e2e/setup-plan.ts", { cwd: root, env, stdio: "inherit" });
   const server = spawn("npx", ["next", "dev", "-H", "127.0.0.1", "-p", String(E2E_PORT)], { cwd: path.join(root, "apps", "web"), env, shell: true, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   server.stdout.on("data", (d) => (log += d));

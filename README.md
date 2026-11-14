@@ -190,7 +190,7 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
 - Session lifecycle; history is preserved across repeat attempts.
 - Submission dedup and attribution (bound / inferred / unlinked → manual link).
 - Idempotent sync and offline session aliasing; export/import round trip.
-- Dashboard E2E: create a plan → start practice (opens a LeetCode tab tagged with the session) → autosaved notes → manual submission → finish via keyboard → Today and the question page update, history lists it, and the other pages render.
+- Dashboard E2E: start practice (opens a LeetCode tab tagged with the session) → autosaved notes → manual submission → finish via keyboard → Today and the question page update, history lists it, and the other pages render. The runner creates the plan beforehand with new questions on every day, so the end-to-end tests pass on any weekday; the plan-creation form itself is not exercised by them.
 - Extension E2E with the **real built extension in Chromium** against the real dashboard, using a stand-in LeetCode page served at real `leetcode.com/problems/...` URLs that issues the same Submit/Run/check requests:
   - pairing works, and a bad token is rejected;
   - the tab binds to the dashboard session;
