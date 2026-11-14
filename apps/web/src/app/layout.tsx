@@ -18,7 +18,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-screen font-sans text-sm">
+      {/* Extensions like Grammarly add attributes to <body> before hydration; ignore those (this element only). */}
+      <body className="min-h-screen font-sans text-sm" suppressHydrationWarning>
         <div className="flex min-h-screen">
           <Sidebar />
           <main className="min-w-0 flex-1">
