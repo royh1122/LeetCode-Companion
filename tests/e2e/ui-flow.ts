@@ -1,12 +1,13 @@
 /**
  * Dashboard E2E (no extension): create plan → start practice → notes autosave →
  * finish with reflection → dashboard reflects it → history/detail/analytics render.
- * Requires a running dashboard on 127.0.0.1:4317 backed by an EMPTY data dir.
- *   LCC_DATA_DIR=data/e2e npm run dev -w @lcc/web   (then)  tsx tests/e2e/ui-flow.ts [screenshotDir]
+ * Requires a running dashboard on the e2e port (see port.ts) backed by an EMPTY data dir.
+ *   npm run test:e2e starts one; or point LCC_URL at a dashboard you started yourself.
  */
 import { chromium, expect, type Page } from "@playwright/test";
+import { E2E_BASE } from "./port";
 
-const BASE = process.env.LCC_URL ?? "http://127.0.0.1:4317";
+const BASE = process.env.LCC_URL ?? E2E_BASE;
 
 async function main() {
   const shots = process.argv[2];

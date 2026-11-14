@@ -6,7 +6,7 @@
  * real, logged-out leetcode.com problem page for detection + hook injection.
  *
  *   npm run ext:build
- *   LCC_DATA_DIR=data/e2e npm run dev -w @lcc/web       # empty or existing data dir
+ *   LCC_DATA_DIR=data/e2e npx next dev -p 4327   (in apps/web; the e2e port, see port.ts)
  *   LCC_DATA_DIR=data/e2e tsx tests/e2e/extension-flow.ts [--real-leetcode] [screenshotDir]
  */
 import { chromium, expect, type BrowserContext, type Page, type Worker } from "@playwright/test";
@@ -15,9 +15,10 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { defaultDbPath, getExtensionToken, openDb } from "@lcc/db";
+import { E2E_BASE } from "./port";
 import { OTHER_GRAPHQL_REQUEST, STUDY_PLAN_NEXT_DATA, STUDY_PLAN_REQUEST, STUDY_PLAN_RESPONSE } from "../../apps/extension/test/fixtures";
 
-const BASE = "http://127.0.0.1:4317";
+const BASE = process.env.LCC_URL ?? E2E_BASE;
 const EXT = path.resolve("apps/extension/dist");
 const args = process.argv.slice(2);
 const REAL = args.includes("--real-leetcode");

@@ -3,12 +3,13 @@
  * Plain HTTP requests, because browsers won't let a test set a foreign Host header.
  */
 import http from "node:http";
+import { E2E_PORT } from "./port";
 
 type Res = { status: number; headers: http.IncomingHttpHeaders };
 
 function request(path: string, opts: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<Res> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port: 4317, path, method: opts.method ?? "GET", headers: opts.headers }, (res) => {
+    const req = http.request({ host: "127.0.0.1", port: E2E_PORT, path, method: opts.method ?? "GET", headers: opts.headers }, (res) => {
       res.resume();
       res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
     });
@@ -23,9 +24,9 @@ function expectStatus(name: string, r: Res, status: number) {
 }
 
 async function main() {
-  const host = "127.0.0.1:4317";
+  const host = `127.0.0.1:${E2E_PORT}`;
   // DNS rebinding: a page on evil.example resolved to 127.0.0.1 still sends its own Host.
-  expectStatus("foreign Host header", await request("/", { headers: { Host: "evil.example:4317" } }), 403);
+  expectStatus("foreign Host header", await request("/", { headers: { Host: `evil.example:${E2E_PORT}` } }), 403);
   expectStatus("foreign Host on an API", await request("/api/export", { headers: { Host: "evil.example" } }), 403);
   // Cross-site reads of dashboard APIs.
   expectStatus("cross-site API request", await request("/api/export", { headers: { Host: host, "Sec-Fetch-Site": "cross-site" } }), 403);

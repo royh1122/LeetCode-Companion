@@ -132,7 +132,7 @@ After changing extension code, run `npm run ext:build` again and click reload on
 | `npm run app` | Build and run the production dashboard (port 4317) |
 | `npm run ext:build` / `ext:watch` | Build the extension once / on change |
 | `npm test` | Unit and integration tests (scheduler, database, extension logic) |
-| `npm run test:e2e` | End-to-end: starts a dashboard on a temporary database, checks the local security boundary, and runs the UI flow and the extension flow in Chromium. Port 4317 must be free (it refuses to run otherwise). Needs Playwright's Chromium once: `npx playwright install chromium`. Add `-- --real-leetcode` to also load a real leetcode.com page. |
+| `npm run test:e2e` | End-to-end: starts a dashboard on a temporary database, checks the local security boundary, and runs the UI flow and the extension flow in Chromium. It uses its own port (4327, or `LCC_E2E_PORT`), so the dashboard on 4317 can keep running; it refuses to run if the test port is taken. Needs Playwright's Chromium once: `npx playwright install chromium`. Add `-- --real-leetcode` to also load a real leetcode.com page. |
 | `npm run typecheck` | Strict TypeScript across all packages |
 | `npm run demo` then `npm run dev:demo` | Generates 5 weeks of fake history in `data/demo` and serves it on port **4318**. Your real data is untouched. |
 | `npm run db:migrate` | Apply schema migrations. Takes an automatic backup first if anything is pending. |
