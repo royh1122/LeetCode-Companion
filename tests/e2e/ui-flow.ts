@@ -64,7 +64,7 @@ async function main() {
   await expect(page.getByRole("radio", { name: /Struggled/ })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByText("(recommended)")).toBeVisible();
   await page.getByRole("button", { name: "Finish session" }).click();
-  await page.waitForURL(BASE + "/");
+  await page.waitForURL(`${BASE}/`);
   await expect(newSection.locator("li", { hasText: firstTitle! }).locator(".line-through")).toBeVisible({ timeout: 10000 });
   console.log("finished session; today progress updated");
 
@@ -83,11 +83,11 @@ async function main() {
     await page.waitForLoadState("networkidle");
     await shot(page, `page${p.replace(/[^a-z]+/g, "-")}`);
   }
-  await page.goto(BASE + "/history");
+  await page.goto(`${BASE}/history`);
   await expect(page.getByRole("link", { name: firstTitle! }).first()).toBeVisible();
 
   // 7. Changing schedule settings
-  await page.goto(BASE + "/plan");
+  await page.goto(`${BASE}/plan`);
   await page.getByLabel("New questions on Mon").fill("4");
   await page.getByRole("button", { name: "Save plan settings" }).click();
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();

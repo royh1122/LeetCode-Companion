@@ -19,7 +19,7 @@ page.on("console", (m) => m.type() === "error" && console.log("console:", m.text
 for (const p of paths) {
   const mobile = p.startsWith("m:");
   const raw = mobile ? p.slice(2) : p;
-  const path = raw === "home" ? "/" : "/" + raw.replace(/^\/+/, "");
+  const path = raw === "home" ? "/" : `/${raw.replace(/^\/+/, "")}`;
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1360, height: 900 });
   const r = await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
   const name = `${mobile ? "m-" : ""}${dark ? "dark-" : ""}${path.replace(/[^a-z0-9]+/gi, "_") || "home"}.png`;

@@ -9,7 +9,7 @@
   <body>
     <header class="top">
       <span class="brand"><span class="logo">lc</span> Companion</span>
-      <button id="open-dash" class="ghost">Dashboard ↗</button>
+      <button type="button" id="open-dash" class="ghost">Dashboard ↗</button>
     </header>
     <main id="main" aria-live="polite"></main>
     <section id="session" hidden>
@@ -26,7 +26,7 @@
           <div class="muted small">Elapsed</div>
           <div id="s-elapsed" class="timer secondary">00:00</div>
         </div>
-        <button id="s-pause" class="secondary"></button>
+        <button type="button" id="s-pause" class="secondary"></button>
       </div>
       <div id="s-capture" class="small"></div>
       <div>
@@ -56,10 +56,10 @@
         <label class="label" for="s-review">Next review</label>
         <select id="s-review"></select>
       </div>
-      <button id="s-finish" class="primary block" disabled>Finish session</button>
+      <button type="button" id="s-finish" class="primary block" disabled>Finish session</button>
       <div class="row-between">
-        <button id="s-abandon" class="ghost danger small">Abandon session</button>
-        <button id="s-history" class="ghost small">Full history ↗</button>
+        <button type="button" id="s-abandon" class="ghost danger small">Abandon session</button>
+        <button type="button" id="s-history" class="ghost small">Full history ↗</button>
       </div>
     </section>
     <footer id="sync" class="sync"></footer>

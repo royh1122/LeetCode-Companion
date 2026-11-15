@@ -108,7 +108,9 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
           <option value="due">Review due</option>
           <option value="title">Title</option>
         </Select>
-        <button className={buttonVariants({ variant: "primary" })}>Apply</button>
+        <button type="submit" className={buttonVariants({ variant: "primary" })}>
+          Apply
+        </button>
         {active ? (
           <Link href="/library" className={buttonVariants({ variant: "ghost" })}>
             Clear

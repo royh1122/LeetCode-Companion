@@ -33,7 +33,15 @@ function stubProblemPage(slug: string) {
   return `<!doctype html><html><head><title>1. ${title} - LeetCode</title></head><body>
   <h1>${title}</h1><textarea id="code">class Solution:\n    def solve(self): return 1</textarea>
   <button id="submit">Submit</button><button id="run">Run</button><div id="out"></div>
+  <a id="next" href="/problems/valid-anagram/">Next problem</a>
   <script>
+  // Like LeetCode's in-app navigation: the address changes first, the tab title some time later.
+  document.getElementById('next').onclick = (e) => {
+    e.preventDefault();
+    history.pushState({}, '', '/problems/valid-anagram/');
+    setTimeout(() => { document.title = '242. Valid Anagram - LeetCode'; }, 2500);
+  };
+  const slugNow = () => location.pathname.split('/')[2];
   let n = 0;
   async function poll(id) {
     for (let i = 0; i < 5; i++) {
@@ -44,14 +52,14 @@ function stubProblemPage(slug: string) {
     }
   }
   document.getElementById('submit').onclick = async () => {
-    const r = await fetch('/problems/${slug}/submit/', { method: 'POST', headers: {'content-type':'application/json'},
+    const r = await fetch('/problems/' + slugNow() + '/submit/', { method: 'POST', headers: {'content-type':'application/json'},
       body: JSON.stringify({ lang: 'python3', question_id: '1', typed_code: document.getElementById('code').value }) });
     const { submission_id } = await r.json();
     poll(submission_id);
   };
   document.getElementById('run').onclick = () => {
     const x = new XMLHttpRequest();
-    x.open('POST', '/problems/${slug}/interpret_solution/');
+    x.open('POST', '/problems/' + slugNow() + '/interpret_solution/');
     x.onload = () => poll(JSON.parse(x.responseText).interpret_id);
     x.send(JSON.stringify({ lang: 'python3', question_id: '1', typed_code: 'pass', data_input: '1' }));
   };
@@ -191,14 +199,14 @@ async function main() {
     const sessionId = dash.url().split("/").pop()!;
     step(`dashboard started session ${sessionId.slice(0, 8)} and opened ${new URL(lc.url()).pathname}`);
 
-    const lcTabId = await waitFor(
+    const lcTabId = (await waitFor(
       async () => {
         const s = await swState(sw);
         return Object.entries((s.tabs ?? {}) as Record<string, { slug: string; mode: string; sessionId: string; captureReady: boolean }>).find(([, t]) => t.slug === slug);
       },
       (v) => !!v && v[1].mode === "bound" && v[1].sessionId === sessionId,
       "LeetCode tab bound to the dashboard session",
-    );
+    ))!;
     step("extension bound the LeetCode tab to that session (via URL tag)");
 
     // ---- Submissions: WA, then Accepted, plus a Run (XHR) ----
@@ -208,7 +216,6 @@ async function main() {
     await lc.click("#submit");
     await expect(lc.locator("#out")).toHaveText("Accepted");
     await lc.click("#run");
-    await new Promise((r) => setTimeout(r, 600));
     const subs = await waitFor(
       () => readDb().prepare("select kind, verdict, code, attribution, platform_submission_id from submissions where session_id = ? order by submitted_at").all(sessionId) as { kind: string; verdict: string; code: string; attribution: string }[],
       (rows) => rows.filter((r) => r.kind === "submit").length === 2 && rows.every((r) => r.verdict !== "Pending") && rows.some((r) => r.kind === "run"),
@@ -225,13 +232,24 @@ async function main() {
     step("dashboard session page updated live (Submissions (2))");
 
     // ---- Refresh does not duplicate ----
-    await lc.reload();
-    await new Promise((r) => setTimeout(r, 1500));
+    // Mark the tab's stored state, so the check below only passes once the reloaded page has
+    // reported itself (the binding from before the reload would otherwise pass on its own).
+    await sw.evaluate(async (id) => {
+      const { tabs } = (await chrome.storage.session.get("tabs")) as { tabs: Record<string, { title: string }> };
+      tabs[id]!.title = "(before reload)";
+      await chrome.storage.session.set({ tabs });
+    }, lcTabId[0]);
+    // Real LeetCode drops the #lcc-session tag from the address, so reload without it.
+    await lc.goto(lc.url().split("#")[0]!);
+    const afterReload = await waitFor(
+      async () => ((await swState(sw)).tabs as Record<string, { title: string; mode: string; sessionId: string }>)[lcTabId[0]]!,
+      (t) => t.title !== "(before reload)",
+      "reloaded page reported to the extension",
+    );
+    if (afterReload.mode !== "bound" || afterReload.sessionId !== sessionId) throw new Error(`binding lost after refresh: ${JSON.stringify(afterReload)}`);
     const openCount = (readDb().prepare("select count(*) c from sessions where problem_id = (select id from problems where slug = ?) and status in ('in_progress','paused')").get(slug) as { c: number }).c;
     if (openCount !== 1) throw new Error(`expected 1 open session after refresh, got ${openCount}`);
-    const afterReload = (await swState(sw)).tabs[lcTabId[0]];
-    if (afterReload.sessionId !== sessionId) throw new Error("binding lost after refresh");
-    step("refresh kept the binding; still exactly one open session");
+    step("refresh (without the session tag) kept the binding; still exactly one open session");
 
     // ---- Second tab on the same problem shares the session ----
     const lc2 = await ctx.newPage();
@@ -242,7 +260,7 @@ async function main() {
 
     // ---- Offline: dashboard unreachable → queued → synced later ----
     await sw.evaluate(async () => {
-      const { config } = await chrome.storage.local.get("config");
+      const { config } = (await chrome.storage.local.get("config")) as { config: object };
       await chrome.storage.local.set({ config: { ...config, serverUrl: "http://127.0.0.1:4399" } });
     });
     await lc.bringToFront();
@@ -254,7 +272,7 @@ async function main() {
     if (SHOTS) await panel.screenshot({ path: `${SHOTS}/ext-panel-offline.png`, fullPage: true });
     step(`offline: panel shows "${(await panel.locator("#sync").textContent())?.trim()}"`);
     await sw.evaluate(async (b) => {
-      const { config } = await chrome.storage.local.get("config");
+      const { config } = (await chrome.storage.local.get("config")) as { config: object };
       await chrome.storage.local.set({ config: { ...config, serverUrl: b } });
     }, BASE);
     await panel.getByRole("button", { name: "Sync now" }).click();
@@ -315,6 +333,83 @@ async function main() {
     );
     if (!Object.values(stored!).every((o) => o.list.slug === "top-interview-150")) throw new Error("wrong plan stored");
     step("study-plan page (full load, list embedded in the page) → plan offered");
+
+    type TabRow = { slug: string | null; title: string | null; frontendId: string | null; mode: string; sessionId: string | null };
+    const tabRow = async (id: string) => ((await swState(sw)).tabs as Record<string, TabRow>)[id];
+    const sessionStatus = (id: string) => (readDb().prepare("select status from sessions where id = ?").get(id) as { status: string } | undefined)?.status;
+    const openExtensionSession = (problemSlug: string) =>
+      (readDb().prepare("select s.id from sessions s join problems p on p.id = s.problem_id where p.slug = ? and s.status in ('in_progress','paused') order by s.started_at desc").get(problemSlug) as { id: string } | undefined)?.id;
+
+    // ---- Pause, resume and abandon from the side panel (the two-sum session started above) ----
+    const directId = openExtensionSession("two-sum")!;
+    await expect(p2.locator("#s-pause")).toHaveText("Pause", { timeout: 10000 });
+    await p2.locator("#s-pause").click();
+    await waitFor(() => sessionStatus(directId), (s) => s === "paused", "session paused on the dashboard");
+    await expect(p2.locator("#s-pause")).toHaveText("Resume", { timeout: 10000 });
+    await p2.locator("#s-pause").click();
+    await waitFor(() => sessionStatus(directId), (s) => s === "in_progress", "session resumed on the dashboard");
+    p2.once("dialog", (d) => void d.accept());
+    await p2.locator("#s-abandon").click();
+    await waitFor(() => sessionStatus(directId), (s) => s === "abandoned", "session abandoned on the dashboard");
+    await waitFor(() => tabRow(directTab![0]), (t) => !!t && t.mode !== "bound", "tab unbound after abandoning");
+    step("side panel: pause → resume → abandon each reached the dashboard; the tab was unbound");
+
+    // ---- Finished in the dashboard: the extension follows ----
+    await p2.getByRole("button", { name: /^(Start session|Practice again)$/ }).click();
+    const againId = await waitFor(() => openExtensionSession("two-sum"), (id) => !!id && id !== directId, "second two-sum session started");
+    await waitFor(() => tabRow(directTab![0]), (t) => t?.mode === "bound" && t.sessionId === againId, "tab bound to the new session");
+    await dash.goto(`${BASE}/sessions/${againId}`);
+    await dash.getByRole("radio", { name: /^Independent/ }).click();
+    await dash.getByRole("button", { name: "Finish session" }).click();
+    await waitFor(() => sessionStatus(againId!), (s) => s === "completed", "session finished in the dashboard");
+    await p2.getByRole("button", { name: "Sync now" }).click();
+    await waitFor(() => tabRow(directTab![0]), (t) => !!t && t.mode !== "bound", "extension saw the dashboard finish");
+    await expect(p2.getByText(/^Finished:/)).toBeVisible({ timeout: 10000 });
+    step("finished in the dashboard → the extension unbound the tab and the panel shows it finished");
+
+    // ---- In-app navigation to another problem (address first, title later) ----
+    const nav = await ctx.newPage();
+    await nav.goto("https://leetcode.com/problems/contains-duplicate/");
+    const navTab = (await waitFor(async () => Object.entries((await swState(sw)).tabs as Record<string, TabRow>).find(([, t]) => t.slug === "contains-duplicate"), (v) => !!v && v[1].mode === "offer", "contains-duplicate offered"))!;
+    const p4 = await ctx.newPage();
+    await p4.goto(`chrome-extension://${extId}/sidepanel.html?tab=${navTab[0]}`);
+    await p4.getByRole("button", { name: /^(Start session|Practice again)$/ }).click();
+    const dupId = await waitFor(() => openExtensionSession("contains-duplicate"), (id) => !!id, "contains-duplicate session started");
+    await waitFor(() => tabRow(navTab[0]), (t) => t?.mode === "bound", "tab bound to contains-duplicate");
+    await nav.bringToFront();
+    await nav.click("#next");
+    const moved = await waitFor(() => tabRow(navTab[0]), (t) => t?.slug === "valid-anagram", "tab moved to valid-anagram");
+    // The title still shows the previous problem at this point: it must not be used.
+    if (moved!.title === "Contains Duplicate" || moved!.frontendId === "1") throw new Error(`previous problem's title used after navigation: ${JSON.stringify(moved)}`);
+    if (moved!.mode === "bound") throw new Error("tab stayed bound to the previous problem's session");
+    await waitFor(() => tabRow(navTab[0]), (t) => t?.title === "Valid Anagram" && t.frontendId === "242", "new problem's title filled in");
+    await p4.reload();
+    await p4.getByRole("button", { name: /^(Start session|Practice again)$/ }).click();
+    await waitFor(() => readDb().prepare("select title, frontend_id from problems where slug = 'valid-anagram'").get() as { title: string; frontend_id: string } | undefined, (r) => r?.title === "Valid Anagram" && r.frontend_id === "242", "valid-anagram stored with its own title and number");
+    if (sessionStatus(dupId!) !== "in_progress") throw new Error("the previous problem's session should stay open");
+    step("in-app navigation: tab unbound from the old problem; new problem stored with its own title and number");
+
+    // ---- Re-pairing after the pairing token changes ----
+    await dash.goto(`${BASE}/settings`);
+    await dash.getByRole("button", { name: /Rotate/ }).click();
+    await dash.getByRole("button", { name: /Confirm/ }).click();
+    const newToken = await waitFor(() => (readDb().prepare("select value from app_meta where key = 'extension_token'").get() as { value: string }).value, (v) => v !== token, "token rotated");
+    await nav.bringToFront();
+    await nav.click("#submit"); // its sync is refused: the extension still has the old token
+    await p4.bringToFront();
+    await expect(p4.locator("#sync")).toContainText("Pairing token rejected", { timeout: 10000 });
+    await expect(p4.getByRole("button", { name: "Options" })).toBeVisible();
+    const opts2 = await ctx.newPage();
+    await opts2.goto(`chrome-extension://${extId}/options.html`);
+    await expect(opts2.locator("#server")).not.toHaveValue("", { timeout: 5000 });
+    await opts2.fill("#token", newToken);
+    await opts2.click("button[type=submit]");
+    await expect(opts2.getByText("Connected and paired")).toBeVisible({ timeout: 10000 });
+    await p4.bringToFront();
+    await p4.getByRole("button", { name: "Sync now" }).click();
+    await waitFor(() => (readDb().prepare("select count(*) c from submissions s join problems p on p.id = s.problem_id where p.slug = 'valid-anagram' and s.kind = 'submit'").get() as { c: number }).c, (c) => c === 1, "submission queued during the token change synced after re-pairing");
+    await expect(p4.locator("#sync")).toContainText("Synced", { timeout: 10000 });
+    step("token rotated → panel says the token was rejected → re-paired in options → queued submission synced");
 
     if (REAL) {
       await ctx.unrouteAll({ behavior: "ignoreErrors" });

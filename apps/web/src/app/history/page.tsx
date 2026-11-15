@@ -65,7 +65,9 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         </Select>
         <Input type="date" name="from" defaultValue={sp.from} className="w-36" aria-label="From date" />
         <Input type="date" name="to" defaultValue={sp.to} className="w-36" aria-label="To date" />
-        <button className={buttonVariants({ variant: "primary" })}>Apply</button>
+        <button type="submit" className={buttonVariants({ variant: "primary" })}>
+          Apply
+        </button>
         {active ? (
           <Link href="/history" className={buttonVariants({ variant: "ghost" })}>
             Clear

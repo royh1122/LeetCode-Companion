@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { OPEN_SESSION_STATUSES, type Attribution, type CaptureSource, type SubmissionKind, type Verdict } from "@lcc/shared";
 import type { Db } from "./client";

@@ -7,11 +7,17 @@ import { E2E_PORT } from "./port";
 
 type Res = { status: number; headers: http.IncomingHttpHeaders };
 
-function request(path: string, opts: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<Res> {
+type ResWithBody = Res & { body: string };
+
+function request(path: string, opts: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<ResWithBody> {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: "127.0.0.1", port: E2E_PORT, path, method: opts.method ?? "GET", headers: opts.headers }, (res) => {
-      res.resume();
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (c: string) => {
+        if (body.length < 4000) body += c;
+      });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
     });
     req.on("error", reject);
     req.end(opts.body);
@@ -37,6 +43,19 @@ async function main() {
   expectStatus("extension API with a wrong token", await request("/api/ext/ping", { headers: { Host: host, Authorization: "Bearer wrong" } }), 401);
   expectStatus("extension API from a web origin", await request("/api/ext/ping", { headers: { Host: host, Origin: "https://evil.example", Authorization: "Bearer x" } }), 403);
   expectStatus("CORS preflight to the extension API", await request("/api/ext/events", { method: "OPTIONS", headers: { Host: host, Origin: "https://evil.example" } }), 403);
+  // Server actions (every dashboard change) from another site, or from a sandboxed page (Origin: null).
+  // A dummy action id: the same-origin control gets past the origin check to "unknown action" (409),
+  // so a different answer for the others shows the origin check refused them before any lookup.
+  const action = (origin: string) =>
+    request("/", { method: "POST", headers: { Host: host, Origin: origin, "Next-Action": "0".repeat(42), "Content-Type": "text/plain;charset=UTF-8" }, body: "[]" });
+  const control = await action(`http://${host}`);
+  if (control.status !== 409) throw new Error(`server action control: expected 409 (unknown action), got ${control.status}`);
+  for (const [name, origin] of [["server action from another site", "https://evil.example"], ["server action with Origin: null", "null"]] as const) {
+    const r = await action(origin);
+    if (r.status < 400 || r.status === control.status) throw new Error(`${name}: not refused (status ${r.status})`);
+    if (r.status !== 403 && !r.body.includes("Invalid Server Actions request")) throw new Error(`${name}: refused for another reason (${r.status}: ${r.body.slice(0, 200)})`);
+    console.log(`✓ ${name} → refused (${r.status})`);
+  }
   // Headers on a normal page.
   const page = await request("/", { headers: { Host: host } });
   expectStatus("dashboard page", page, 200);

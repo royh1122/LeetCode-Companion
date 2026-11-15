@@ -1,6 +1,6 @@
 export default function Loading() {
   return (
-    <div className="animate-pulse space-y-6" aria-busy="true" aria-label="Loading">
+    <div className="animate-pulse space-y-6" role="status" aria-busy="true" aria-label="Loading">
       <div className="h-6 w-56 rounded bg-surface-3" />
       <div className="h-4 w-80 rounded bg-surface-2" />
       {[0, 1, 2].map((i) => (

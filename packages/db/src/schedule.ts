@@ -25,7 +25,7 @@ import type { Db } from "./client";
 import { bumpRevision, getAppSettings } from "./meta";
 import { getActivePlan, getLightDays, getSkipDates, pendingQueue, practicedProblemIds, type ParsedPlan } from "./plans";
 import { emptyStats, getProblemStats } from "./problems";
-import { assignments, dailySnapshots, planDays, planQueue, planSkips, problems, reviewState, sessions, type Assignment, type Problem } from "./schema";
+import { assignments, dailySnapshots, planDays, planQueue, planSkips, problems, reviewState, type Assignment, type Problem } from "./schema";
 import { DomainError, listOpenSessions } from "./sessions";
 
 export function todayFor(db: Db, now = Date.now()): LocalDate {
@@ -373,7 +373,7 @@ export function rescheduleAssignment(db: Db, id: number, to: LocalDate, now = Da
 export function skipAssignment(db: Db, id: number) {
   db.transaction((tx) => {
     const a = tx.select().from(assignments).where(eq(assignments.id, id)).get();
-    if (!a || a.status !== "pending") throw new DomainError("not_open", "Only pending assignments can be skipped");
+    if (a?.status !== "pending") throw new DomainError("not_open", "Only pending assignments can be skipped");
     tx.update(assignments).set({ status: "skipped", updatedAt: Date.now() }).where(eq(assignments.id, id)).run();
     if (a.type === "new" && a.planId != null) {
       tx.update(planQueue)
@@ -613,7 +613,7 @@ export function getWeekNewStatus(db: Db, plan: ParsedPlan, today: LocalDate) {
  */
 export function doMoreToday(db: Db, n: number, now = Date.now()) {
   const plan = getActivePlan(db);
-  if (!plan || plan.status !== "active") throw new DomainError("no_plan", "No active plan");
+  if (plan?.status !== "active") throw new DomainError("no_plan", "No active plan");
   const today = todayFor(db, now);
   if (today < plan.startDate) throw new DomainError("not_started", "Your plan hasn't started yet");
   ensureSchedule(db, now);

@@ -123,6 +123,7 @@ export function Reveal({
   return (
     <div className="rounded-md border border-border">
       <button
+        type="button"
         className="flex w-full items-center justify-between px-3 py-2 text-left text-sm"
         aria-expanded={open}
         disabled={pending}
@@ -235,6 +236,7 @@ export function ReflectionForm({
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="radiogroup">
           {OUTCOMES.map((o) => (
             <button
+              type="button"
               key={o}
               role="radio"
               aria-checked={outcome === o}
@@ -286,7 +288,7 @@ export function ReflectionForm({
         </div>
       </div>
 
-      <button className="flex items-center gap-1 text-xs font-medium text-muted hover:text-fg" onClick={() => setMore((m) => !m)} aria-expanded={more}>
+      <button type="button" className="flex items-center gap-1 text-xs font-medium text-muted hover:text-fg" onClick={() => setMore((m) => !m)} aria-expanded={more}>
         <ChevronDown className={cn("size-3.5 transition-transform", more && "rotate-180")} />
         More details (optional)
       </button>
@@ -432,7 +434,7 @@ export function SubmissionList({ subs, showRuns = true, timeZone }: { subs: Subm
     <ul className="divide-y divide-border rounded-md border border-border">
       {list.map((s, i) => (
         <li key={s.id}>
-          <button className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-xs hover:bg-surface-2" onClick={() => setOpenId(openId === s.id ? null : s.id)} aria-expanded={openId === s.id}>
+          <button type="button" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-xs hover:bg-surface-2" onClick={() => setOpenId(openId === s.id ? null : s.id)} aria-expanded={openId === s.id}>
             <span className="tabular w-5 text-subtle">{i + 1}</span>
             {s.kind === "run" ? <Badge tone="outline">Run</Badge> : <VerdictBadge v={s.verdict} />}
             {s.kind === "run" ? <span className="text-muted">{s.verdict}</span> : null}

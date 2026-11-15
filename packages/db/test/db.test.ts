@@ -15,7 +15,6 @@ import {
   editCompletedSession,
   createPlan,
   enqueueProblem,
-  ensureSchedule,
   exportAll,
   finishSession,
   getActivePlan,

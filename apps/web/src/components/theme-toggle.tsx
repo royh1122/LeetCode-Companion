@@ -38,6 +38,7 @@ export function ThemeToggle() {
     <div className="flex rounded-md border border-border p-0.5" role="radiogroup" aria-label="Theme">
       {opts.map((o) => (
         <button
+          type="button"
           key={o.m}
           role="radio"
           aria-checked={mode === o.m}

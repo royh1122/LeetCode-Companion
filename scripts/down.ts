@@ -79,14 +79,14 @@ async function main() {
   }
   const norm = (s: string) => s.replace(/\\/g, "/").toLowerCase();
   // With the separator, so the main folder (…/leetcode-prep) doesn't also match …/leetcode-prep-dev.
-  const root = norm(ROOT).replace(/\/$/, "") + "/";
+  const root = `${norm(ROOT).replace(/\/$/, "")}/`;
   let stopped = 0;
   let failed = 0;
   for (const { pid, cmd, cwd } of found) {
     // On Windows Next's command line contains this repo's node_modules path. On Linux and macOS
     // Next renames its process title to "next-server (vX)", so check its working directory
     // (the server runs in apps/web) instead.
-    const ours = /next/i.test(cmd) && (norm(cmd).includes(root) || (cwd !== "" && norm(cwd + "/").startsWith(root)));
+    const ours = /next/i.test(cmd) && (norm(cmd).includes(root) || (cwd !== "" && norm(`${cwd}/`).startsWith(root)));
     if (!ours) {
       console.log(`[down] Port ${PORT} is used by another program (pid ${pid}); leaving it alone:\n  ${cmd || "(unknown command)"}`);
       continue;

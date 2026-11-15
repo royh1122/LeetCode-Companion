@@ -12,7 +12,6 @@ import {
   problemUrl,
   reflectionSchema,
   toLocalDate,
-  type LocalDate,
 } from "@lcc/shared";
 import { deepMerge } from "./diff";
 import { db, log } from "./server";

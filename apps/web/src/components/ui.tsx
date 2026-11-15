@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import * as React from "react";
+import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
@@ -81,6 +81,7 @@ export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLS
 }
 
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
+  // biome-ignore lint/a11y/noLabelWithoutControl: a wrapper; callers pass htmlFor or wrap the control
   return <label className={cn("text-xs font-medium text-muted", className)} {...props} />;
 }
 

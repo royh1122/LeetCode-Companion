@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, max, ne, sql } from "drizzle-orm";
-import { DEFAULT_PLAN_SETTINGS, planSettingsSchema, startOfWeek, toLocalDate, weekdayOf, type LocalDate, type PlanSettings } from "@lcc/shared";
+import { DEFAULT_PLAN_SETTINGS, planSettingsSchema, toLocalDate, weekdayOf, type LocalDate, type PlanSettings } from "@lcc/shared";
 import type { Db } from "./client";
 import { bumpRevision, getAppSettings } from "./meta";
 import { DomainError } from "./sessions";

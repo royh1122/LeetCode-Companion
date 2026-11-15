@@ -85,12 +85,13 @@ export function localDateBounds(d: LocalDate, timeZone: string): { start: number
     // Binary search on [from - 36h, from + 36h] for the first instant with local date >= target.
     let lo = from - 36 * 3_600_000;
     let hi = from + 36 * 3_600_000;
-    while (hi - lo > 1000) {
+    // To the millisecond: `hi` ends as the exact first instant of the target date (local midnight).
+    while (hi - lo > 1) {
       const mid = Math.floor((lo + hi) / 2);
       if (toLocalDate(mid, timeZone) >= target) hi = mid;
       else lo = mid;
     }
-    return Math.ceil(hi / 1000) * 1000;
+    return hi;
   };
   return { start: find(d, guess), end: find(addDays(d, 1), guess + 86_400_000) };
 }

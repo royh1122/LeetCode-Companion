@@ -89,11 +89,16 @@ export default async function ProblemPage({ params }: { params: Promise<{ slug: 
         <SpoilerReveal shown={showPatterns} label="Show patterns & tags">
           <PatternsEditor problemId={p.id} patterns={p.patterns} suggestions={allPatterns} />
           <div className="flex flex-wrap gap-1">
-            {p.topics.map((t) => (
+            {p.topics.flatMap((t, i) => [
+              i ? (
+                <span key={`d-${t.slug}`} className="text-[11px] text-subtle">
+                  ·
+                </span>
+              ) : null,
               <span key={t.slug} className="text-[11px] text-subtle">
                 {t.name}
-              </span>
-            )).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, <span key={`d${i}`} className="text-[11px] text-subtle">·</span>, el] : [el]), [])}
+              </span>,
+            ])}
           </div>
         </SpoilerReveal>
       </header>

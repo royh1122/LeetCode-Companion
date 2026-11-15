@@ -7,6 +7,7 @@ import type { Reflection } from "@lcc/shared";
 import { ensureSyncAlarm, SYNC_ALARM } from "./lib/alarms";
 import { httpApi } from "./lib/api";
 import { Controller, isLeetCodeUrl, type TabState } from "./lib/controller";
+import { isAllowedMessage } from "./lib/gate";
 import type { Intercepted } from "./lib/intercept";
 import type { BgRequest } from "./lib/messages";
 import { chromeKV } from "./lib/storage";
@@ -49,12 +50,8 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (!isLeetCodeUrl(tab.url)) void controller.onTabLeft(tabId);
 });
 
-/** What content scripts on leetcode.com may ask for. Everything else (settings, token, sync, finishing…) is for extension pages only. */
-const CONTENT_SCRIPT_MESSAGES = new Set<BgRequest["type"]>(["page", "heartbeat", "intercepted", "start", "resume", "ignore", "open-dashboard"]);
-
 async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
-  const fromExtensionPage = !!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`);
-  if (!fromExtensionPage && !CONTENT_SCRIPT_MESSAGES.has(msg.type)) throw new Error("Not allowed from a web page");
+  if (!isAllowedMessage(msg.type, sender.url, chrome.runtime.id)) throw new Error("Not allowed from a web page");
   // Explicit tabId (side panel acting on a LeetCode tab) wins over the sender's own tab.
   const explicit = "tabId" in msg && typeof msg.tabId === "number" ? msg.tabId : undefined;
   const tabId = explicit ?? sender.tab?.id;

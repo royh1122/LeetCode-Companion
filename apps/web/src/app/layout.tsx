@@ -25,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant script (no user data) that sets the theme before first paint */}
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       {/* Extensions like Grammarly add attributes to <body> before hydration; ignore those (this element only). */}

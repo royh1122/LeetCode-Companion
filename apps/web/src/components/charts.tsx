@@ -92,7 +92,10 @@ export function BarSeries({ title, data, x, series, height, stacked, note, color
             maxBarSize={36}
             isAnimationActive={false}
           >
-            {colorBy ? data.map((row, j) => <Cell key={j} fill={colorBy(row)} />) : null}
+            {colorBy
+              ? // biome-ignore lint/suspicious/noArrayIndexKey: one cell per data point, in data order (Recharts matches them by position)
+                data.map((row, j) => <Cell key={j} fill={colorBy(row)} />)
+              : null}
           </Bar>
         ))}
       </BarChart>

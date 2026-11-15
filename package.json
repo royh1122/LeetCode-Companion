@@ -30,11 +30,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx tests/e2e/run.ts",
-    "typecheck": "tsc -p packages/shared && tsc -p packages/scheduler && tsc -p packages/db && tsc -p apps/extension && tsc -p apps/web --noEmit",
+    "lint": "biome lint .",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/scheduler && tsc -p packages/db && tsc -p apps/extension && tsc -p apps/web --noEmit && tsc -p tsconfig.tools.json",
     "demo": "tsx scripts/demo.ts",
     "dev:demo": "npm run dev:demo -w @lcc/web"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.8",
     "@playwright/test": "^1.65.0",
     "@types/node": "^24.0.0",
     "playwright": "^1.65.0",

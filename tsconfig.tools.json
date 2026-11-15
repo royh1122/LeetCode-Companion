@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.base.json",
+  // e2e code runs some functions inside the extension (chrome.*).
+  "compilerOptions": { "types": ["node", "chrome"] },
+  "include": ["scripts", "tests/e2e", "tests/scripts", "vitest.config.mts", "apps/extension/make-icons.ts"]
+}

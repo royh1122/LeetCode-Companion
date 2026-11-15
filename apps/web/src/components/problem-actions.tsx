@@ -3,7 +3,7 @@
 import { CalendarPlus, History, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { OUTCOMES, OUTCOME_LABELS, addDays, type Outcome } from "@lcc/shared";
+import { OUTCOMES, OUTCOME_LABELS, type Outcome } from "@lcc/shared";
 import { addToDayAction, deleteSessionAction, editSession, logPastAttempt, restartProblemAction, setProblemPatterns } from "@/lib/actions";
 import { Button, Input, Label, Select, Textarea } from "./ui";
 
@@ -129,7 +129,7 @@ export function PatternsEditor({ problemId, patterns, suggestions }: { problemId
         <span key={p} className="inline-flex items-center gap-1 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-xs">
           {i === 0 ? <span className="text-[10px] text-subtle">primary</span> : null}
           {p}
-          <button aria-label={`Remove pattern ${p}`} disabled={pending} onClick={() => save(list.filter((x) => x !== p))} className="text-subtle hover:text-fg">
+          <button type="button" aria-label={`Remove pattern ${p}`} disabled={pending} onClick={() => save(list.filter((x) => x !== p))} className="text-subtle hover:text-fg">
             <X className="size-3" />
           </button>
         </span>

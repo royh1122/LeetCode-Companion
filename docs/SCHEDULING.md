@@ -13,7 +13,7 @@ The scheduler is a set of pure functions in `packages/scheduler`: `planDay`, `co
 
 The first time the dashboard is opened on a day, the scheduler runs these steps. If the dashboard is not opened that day, nothing is allocated for it; see the backlog policy below.
 
-1. **Expire stale SRS picks.** Unfinished `srs_review` assignments from earlier days are marked *expired*. The problem stays due and is re-ranked today, so SRS tasks never pile up as duplicates.
+1. **Expire stale SRS picks.** `srs_review` assignments from earlier days that were never started are marked *expired*. A pick that was started stays open and carries over. The problem stays due and is re-ranked today, so SRS tasks never pile up as duplicates.
 2. **Mandatory cohort review.** This step runs only on configured review days. The *cohort* is the set of new questions completed earlier in the same week, in completion order.
    - Each review day has a quota (default Sat 12, Sun "rest"). The target is cumulative, so if Saturday was missed, Sunday includes Saturday's share.
    - A problem gets at most one weekend review per cohort week (enforced by a unique index).

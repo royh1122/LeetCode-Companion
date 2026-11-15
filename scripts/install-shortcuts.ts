@@ -76,7 +76,7 @@ function main() {
           `$s.TargetPath = (Join-Path $env:WINDIR 'System32\\wscript.exe')`,
           `$s.Arguments = '"' + ${q(target)} + '"'`,
           `$s.WorkingDirectory = ${q(ROOT)}`,
-          `$s.IconLocation = ${q(ICON + ",0")}`,
+          `$s.IconLocation = ${q(`${ICON},0`)}`,
           `$s.Description = ${q(kind === "start" ? "Start the LeetCode Companion dashboard and open it" : "Stop the LeetCode Companion dashboard")}`,
           `$s.Save()`,
         ].join("; "),

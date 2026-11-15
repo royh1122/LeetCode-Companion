@@ -36,7 +36,7 @@ async function main() {
     case "restore": {
       if (!arg) {
         const files = fs.existsSync(backupDir()) ? fs.readdirSync(backupDir()).filter((f) => f.endsWith(".db")).sort() : [];
-        console.log("Usage: npm run db:restore -- <backup-file>\nAvailable backups:\n" + files.map((f) => `  ${path.join(backupDir(), f)}`).join("\n"));
+        console.log(`Usage: npm run db:restore -- <backup-file>\nAvailable backups:\n${files.map((f) => `  ${path.join(backupDir(), f)}`).join("\n")}`);
         process.exit(1);
       }
       const src = path.resolve(arg);

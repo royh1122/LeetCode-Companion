@@ -113,7 +113,7 @@ export function AutosaveTextarea({
     setConflict(null);
     void flush();
   };
-  const useOther = () => {
+  const takeOther = () => {
     if (conflict === null) return;
     if (timer.current) clearTimeout(timer.current);
     lastSaved.current = conflict;
@@ -165,7 +165,7 @@ export function AutosaveTextarea({
             <Button size="sm" onClick={keepMine}>
               Keep mine
             </Button>
-            <Button size="sm" onClick={useOther}>
+            <Button size="sm" onClick={takeOther}>
               Use the other version
             </Button>
           </div>

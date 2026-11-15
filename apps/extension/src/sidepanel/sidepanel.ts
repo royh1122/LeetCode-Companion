@@ -114,7 +114,7 @@ function render(url: string) {
   main.replaceChildren();
   const tab = state?.tab;
   const s = state?.session;
-  if (!tab || !tab.slug) {
+  if (!tab?.slug) {
     section.hidden = true;
     renderedSessionId = null;
     const sp = state?.studyPlan;

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { weeklyNewTarget } from "@lcc/scheduler";
 import { addDays, effectiveDuration, isIndependentOutcome, isSuccessOutcome, startOfWeek, toLocalDate, type LocalDate } from "@lcc/shared";
 import type { Db } from "./client";

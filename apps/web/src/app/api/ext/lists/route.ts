@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const denied = requireExtension(req);
   if (denied) return denied;
-  let list;
+  let list: ReturnType<typeof parseListObject>;
   try {
     list = parseListObject(((await req.json()) as { list?: unknown })?.list);
   } catch (e) {

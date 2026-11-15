@@ -9,7 +9,7 @@ import path from "node:path";
 
 const dir = process.env.LCC_DATA_DIR ? path.resolve(process.env.LCC_DATA_DIR) : "";
 // Only ever a temporary directory made by the runner, never real or demo data.
-if (!dir || !dir.startsWith(path.resolve(os.tmpdir())) || !path.basename(dir).startsWith("lcc-e2e-data-") || process.env.LCC_DB_PATH) {
+if (!dir?.startsWith(path.resolve(os.tmpdir())) || !path.basename(dir).startsWith("lcc-e2e-data-") || process.env.LCC_DB_PATH) {
   throw new Error("setup-plan only runs on the e2e runner's temporary data directory");
 }
 

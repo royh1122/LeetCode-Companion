@@ -79,8 +79,10 @@ export function CodeBlock({ code, lang, maxHeight = 480, header }: { code: strin
       <pre className="overflow-auto py-2 font-mono text-[12.5px] leading-[1.6]" style={{ maxHeight }}>
         <code className="hljs grid">
           {lines.map((l, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: display-only lines of a fixed text; the line number is the identity
             <span key={i} className="flex">
               <span className="tabular w-10 shrink-0 select-none pr-3 text-right text-subtle">{i + 1}</span>
+              {/* biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output, which escapes the source (see highlightToLines) */}
               <span className="whitespace-pre pr-4" dangerouslySetInnerHTML={{ __html: l || " " }} />
             </span>
           ))}
@@ -136,6 +138,7 @@ export function CodeDiff({ versions, defaultA, defaultB }: { versions: CodeVersi
             const l = p.added ? "" : ++ln;
             const r = p.removed ? "" : ++rn;
             return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: display-only diff lines; part and line position are the identity
               <div key={`${pi}-${i}`} className={cn("flex", p.added && "bg-good-soft", p.removed && "bg-bad-soft")}>
                 <span className="tabular w-9 shrink-0 select-none pr-2 text-right text-subtle">{l}</span>
                 <span className="tabular w-9 shrink-0 select-none pr-2 text-right text-subtle">{r}</span>

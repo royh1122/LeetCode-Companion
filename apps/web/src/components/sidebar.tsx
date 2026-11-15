@@ -25,6 +25,7 @@ export function Sidebar() {
   return (
     <>
       <button
+        type="button"
         className="fixed left-3 top-3 z-40 rounded-md border border-border bg-surface p-1.5 md:hidden"
         aria-label={open ? "Close navigation" : "Open navigation"}
         onClick={() => setOpen((o) => !o)}
@@ -63,7 +64,8 @@ export function Sidebar() {
           <ThemeToggle />
         </div>
       </aside>
-      {open ? <div className="fixed inset-0 z-20 bg-black/30 md:hidden" onClick={() => setOpen(false)} /> : null}
+      {/* A backdrop for pointer users; keyboard and screen-reader users close the menu with its toggle button. */}
+      {open ? <div className="fixed inset-0 z-20 bg-black/30 md:hidden" aria-hidden="true" onClick={() => setOpen(false)} /> : null}
     </>
   );
 }
