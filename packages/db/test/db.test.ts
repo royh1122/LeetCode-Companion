@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { addDays, toLocalDate, weekdayOf, type Outcome } from "@lcc/shared";
+import { addDays, DEFAULT_SRS_SETTINGS, toLocalDate, weekdayOf, type Outcome } from "@lcc/shared";
 import {
   abandonSession,
   addAssignment,
@@ -53,6 +56,13 @@ import {
   getRevision,
   getExtensionContext,
   postponeReview,
+  updateAppSettings,
+  getAppSettings,
+  getMeta,
+  setMeta,
+  openDb,
+  backupDatabaseSync,
+  type Db,
 } from "../src";
 import { at, freshDb, TZ } from "./helpers";
 
@@ -942,6 +952,99 @@ describe("export / import", () => {
     const data2 = JSON.parse(JSON.stringify(exportAll(src)));
     data2.problems[0].slug = "../evil";
     expect(() => importAll(target, data2)).toThrow();
+  });
+
+  // A source DB with custom SRS settings, a postponed review, a task moved to a future day,
+  // and daily snapshots; exported on Tuesday.
+  function richSource() {
+    const TUE = addDays(MON, 1);
+    const THU = addDays(MON, 3);
+    const src = freshDb();
+    updateAppSettings(src, { srs: { ...DEFAULT_SRS_SETTINGS, baseIntervals: { ...DEFAULT_SRS_SETTINGS.baseIntervals, independent: 10 } } });
+    createPlan(src, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const mon = getTodayView(src, at(MON, 9)).sections.newQuestions;
+    solveAll(src, mon, MON);
+    const postponed = mon[0]!.problem;
+    const plain = mon[1]!.problem;
+    postponeReview(src, postponed.id, addDays(MON, 20), at(MON, 12));
+    const moved = getTodayView(src, at(TUE, 8)).sections.newQuestions[0]!;
+    rescheduleAssignment(src, moved.assignment.id, THU, at(TUE, 9));
+    const data = JSON.parse(JSON.stringify(exportAll(src)));
+    return { src, data, TUE, THU, postponed, plain, moved };
+  }
+  const snapshotsOf = (db: Db) => db.select().from(schema.dailySnapshots).all().map(({ createdAt: _c, ...s }) => s);
+
+  it("a restore reproduces settings, postponements, snapshots and future days", () => {
+    const { src, data, TUE, THU, postponed, plain, moved } = richSource();
+    const target = openDb(":memory:", { skipBackup: true });
+    importAll(target, data, at(TUE, 12));
+
+    // Settings land before review dates are recomputed (custom interval, imported time zone).
+    expect(getAppSettings(target).srs.baseIntervals.independent).toBe(10);
+    expect(getProblemDetail(target, plain.slug)!.reviewState!.nextDueDate).toBe(addDays(MON, 10));
+    // The postponement survives.
+    expect(getProblemDetail(target, postponed.slug)!.reviewState).toMatchObject({ nextDueDate: addDays(MON, 20), postponedTo: addDays(MON, 20) });
+    // Trend history survives.
+    expect(snapshotsOf(src).length).toBeGreaterThan(0);
+    expect(snapshotsOf(target)).toEqual(snapshotsOf(src));
+    // Thursday already holds the moved task, but still gets its own new questions when it arrives.
+    const thu = (db: Db) => getTodayView(db, at(THU, 8)).sections.newQuestions.map((i) => i.problem.slug).sort();
+    const expected = thu(src);
+    expect(expected).toContain(moved.problem.slug);
+    expect(expected.length).toBeGreaterThan(1);
+    expect(thu(target)).toEqual(expected);
+  });
+
+  it("importing into a database that already has a plan keeps its plan and settings but adds history", () => {
+    const { data, postponed } = richSource();
+    const target = freshDb();
+    createPlan(target, { startDate: MON, timeZone: TZ }, at(MON, 8));
+    const rep = importAll(target, data, at(addDays(MON, 1), 12));
+    expect(rep.plans.skipped).toBe(1);
+    expect(getAppSettings(target).srs.baseIntervals.independent).toBe(7);
+    // Default interval (7) from Monday is earlier than the postponement, so it still applies.
+    expect(getProblemDetail(target, postponed.slug)!.reviewState).toMatchObject({ nextDueDate: addDays(MON, 20), postponedTo: addDays(MON, 20) });
+    expect(snapshotsOf(target).length).toBeGreaterThan(0);
+  });
+
+  it("imported settings are checked field by field", () => {
+    const src = freshDb();
+    const data = JSON.parse(JSON.stringify(exportAll(src)));
+    data.settings.idleThresholdSec = 5; // below the minimum
+    data.settings.srs.maxIntervalDays = 90;
+    const target = openDb(":memory:", { skipBackup: true });
+    importAll(target, data);
+    expect(JSON.parse(getMeta(target, "settings")!)).toMatchObject({ timeZone: TZ, idleThresholdSec: 300, srs: { maxIntervalDays: 90 } });
+
+    const target2 = openDb(":memory:", { skipBackup: true });
+    importAll(target2, { ...data, settings: "garbage" });
+    expect(getMeta(target2, "settings")).toBeNull();
+  });
+});
+
+describe("settings and backups", () => {
+  it("one invalid stored setting falls back alone, keeping the others", () => {
+    const db = freshDb();
+    const good = getAppSettings(db);
+    setMeta(db, "settings", JSON.stringify({ ...good, idleThresholdSec: 5, srs: { ...good.srs, maxIntervalDays: 90, baseIntervals: { ...good.srs.baseIntervals, easy: "x" } } }));
+    expect(getAppSettings(db)).toMatchObject({ timeZone: TZ, idleThresholdSec: 300, srs: { maxIntervalDays: 90, baseIntervals: { easy: 21, independent: 7 } } });
+  });
+
+  it("two backups in the same second both succeed", () => {
+    const prev = process.env.LCC_DATA_DIR;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-backup-"));
+    process.env.LCC_DATA_DIR = dir;
+    try {
+      const db = freshDb();
+      const a = backupDatabaseSync(db.$client, "test");
+      const b = backupDatabaseSync(db.$client, "test");
+      expect(a).not.toBe(b);
+      expect(fs.existsSync(a) && fs.existsSync(b)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.LCC_DATA_DIR;
+      else process.env.LCC_DATA_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("imports an open session next to a differently-open local one without failing", () => {

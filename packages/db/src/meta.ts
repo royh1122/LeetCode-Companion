@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { appSettingsSchema, defaultAppSettings, isValidTimeZone, type AppSettings } from "@lcc/shared";
+import type { z } from "zod";
+import { appSettingsSchema, defaultAppSettings, type AppSettings } from "@lcc/shared";
 import type { Db } from "./client";
 import { appMeta } from "./schema";
 
@@ -27,25 +28,55 @@ export function getRevision(db: Db): number {
   return Number(getMeta(db, "revision") ?? 0);
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Walks the schema: each leaf that is missing or invalid takes its default; the rest are kept. */
+function pickValid(schema: z.ZodType, value: unknown, fallback: unknown, path: string, dropped: string[]): unknown {
+  // Duck-typed (not instanceof) so it works even if @lcc/shared resolves its own copy of zod.
+  const shape = (schema as { shape?: unknown }).shape;
+  if (isRecord(shape)) {
+    const v = isRecord(value) ? value : {};
+    if (value !== undefined && !isRecord(value)) dropped.push(path || "(all)");
+    const fb = fallback as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(shape as Record<string, z.ZodType>).map(([k, s]) => [k, pickValid(s, v[k], fb[k], path ? `${path}.${k}` : k, dropped)]));
+  }
+  if (value === undefined) return fallback;
+  const r = schema.safeParse(value);
+  if (r.success) return r.data;
+  dropped.push(path);
+  return fallback;
+}
+
+/**
+ * Turns stored or imported settings into valid ones. A field that is invalid (hand-edited, or
+ * from an older version) falls back to its default alone; `dropped` lists those fields.
+ */
+export function normalizeSettings(raw: unknown, defaults: AppSettings = defaultAppSettings()): { settings: AppSettings; dropped: string[] } {
+  const dropped: string[] = [];
+  const picked = pickValid(appSettingsSchema, raw, defaults, "", dropped);
+  const r = appSettingsSchema.safeParse(picked);
+  return r.success ? { settings: r.data, dropped } : { settings: defaults, dropped: ["(all)"] };
+}
+
+const warned = new Set<string>();
+
 export function getAppSettings(db: Db): AppSettings {
   const raw = getMeta(db, "settings");
-  const defaults = defaultAppSettings();
-  if (!raw) return defaults;
+  if (!raw) return defaultAppSettings();
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    const merged = {
-      ...defaults,
-      ...parsed,
-      srs: { ...defaults.srs, ...parsed.srs, baseIntervals: { ...defaults.srs.baseIntervals, ...parsed.srs?.baseIntervals } },
-      mastery: { ...defaults.mastery, ...parsed.mastery },
-    };
-    // An unknown zone (e.g. typed by hand before validation existed) falls back alone, keeping other settings.
-    if (typeof merged.timeZone !== "string" || !isValidTimeZone(merged.timeZone)) merged.timeZone = defaults.timeZone;
-    const r = appSettingsSchema.safeParse(merged);
-    return r.success ? r.data : defaults;
+    parsed = JSON.parse(raw);
   } catch {
-    return defaults;
+    parsed = null;
   }
+  const { settings, dropped } = normalizeSettings(parsed);
+  // Read on every page render: warn once per distinct problem, not on every read.
+  const key = dropped.join(",");
+  if (dropped.length && !warned.has(key)) {
+    warned.add(key);
+    console.warn(`[settings] invalid stored value(s) replaced by defaults: ${key}`);
+  }
+  return settings;
 }
 
 export function updateAppSettings(db: Db, patch: Partial<AppSettings>): AppSettings {

@@ -59,17 +59,24 @@ export function backupDir(): string {
   return dir;
 }
 
-export async function backupDatabase(sqlite: Database.Database, label = "manual"): Promise<string> {
+/** A new backup file name; a second backup in the same second gets a numbered suffix. */
+function newBackupPath(label: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-  const file = path.join(backupDir(), `lcc-${stamp}-${label}.db`);
+  const dir = backupDir();
+  let file = path.join(dir, `lcc-${stamp}-${label}.db`);
+  for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `lcc-${stamp}-${label}-${n}.db`);
+  return file;
+}
+
+export async function backupDatabase(sqlite: Database.Database, label = "manual"): Promise<string> {
+  const file = newBackupPath(label);
   await sqlite.backup(file);
   return file;
 }
 
 /** Synchronous backup (used before migrations). VACUUM INTO produces a consistent copy. */
 export function backupDatabaseSync(sqlite: Database.Database, label: string): string {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-  const file = path.join(backupDir(), `lcc-${stamp}-${label}.db`);
+  const file = newBackupPath(label);
   sqlite.prepare("VACUUM INTO ?").run(file);
   return file;
 }

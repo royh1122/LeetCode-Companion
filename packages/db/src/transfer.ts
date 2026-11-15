@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   ASSIGNMENT_STATUSES,
@@ -16,11 +16,14 @@ import {
   planSettingsSchema,
 } from "@lcc/shared";
 import type { Db } from "./client";
-import { bumpRevision, getAppSettings, getMeta, setMeta } from "./meta";
+import { bumpRevision, getAppSettings, getMeta, normalizeSettings, setMeta } from "./meta";
 import { NOTE_FIELDS } from "./notes";
 import { getProblemBySlug } from "./problems";
+import { todayFor } from "./schedule";
 import {
   assignments,
+  dailySnapshots,
+  reviewState,
   planDays,
   planLightDays,
   planQueue,
@@ -83,6 +86,15 @@ export function exportAll(db: Db) {
     submissions: db.select().from(submissions).all().map(({ id: _id, ...s }) => strip(s)),
     notes: db.select().from(problemNotes).all().map(strip),
     noteRevisions: db.select().from(problemNoteRevisions).all().map(({ id: _id, ...r }) => strip(r)),
+    // Review state is re-derived from sessions on import; only a postponement can't be.
+    // Its updatedAt is when it was set (see clearPostponementIfSuperseded).
+    reviewPostponements: db
+      .select()
+      .from(reviewState)
+      .where(isNotNull(reviewState.postponedTo))
+      .all()
+      .map((r) => ({ problemSlug: slugOf.get(r.problemId)!, postponedTo: r.postponedTo!, postponedAt: r.updatedAt })),
+    dailySnapshots: db.select().from(dailySnapshots).all().map(({ createdAt: _c, ...s }) => s),
   };
 }
 export type ExportData = ReturnType<typeof exportAll>;
@@ -151,6 +163,13 @@ const exportSchema = z.object({
     .default([]),
   notes: z.array(z.object({ problemSlug: z.string() }).passthrough()).default([]),
   noteRevisions: z.array(z.object({ problemSlug: z.string() }).passthrough()).default([]),
+  // Added later in version 1; older exports don't have them.
+  reviewPostponements: z.array(z.object({ problemSlug: slug, postponedTo: date, postponedAt: int })).default([]),
+  dailySnapshots: z
+    .array(z.object({ date, dueCount: int.min(0), overdueCount: int.min(0), mastery: z.record(z.string(), int.min(0)) }))
+    .default([]),
+  // Checked field by field in importAll (normalizeSettings), not here: one bad field shouldn't refuse the file.
+  settings: z.unknown().optional(),
 });
 
 export interface ImportReport {
@@ -161,6 +180,10 @@ export interface ImportReport {
   sessions: { inserted: number; existing: number; conflicts: number };
   submissions: { inserted: number; existing: number };
   notes: { inserted: number; identical: number; conflictsKeptAsRevision: number };
+  /** `kept` = this database already had settings, so the file's were not applied. */
+  settings: { status: "imported" | "kept" | "missing" | "invalid"; replacedByDefaults: string[] };
+  postponements: { applied: number };
+  snapshots: { inserted: number };
 }
 
 /**
@@ -170,7 +193,7 @@ export interface ImportReport {
  *  - a differing note is stored as a revision (both texts survive);
  *  - plans + assignments are only imported into a database with no plans.
  */
-export function importAll(db: Db, input: unknown): ImportReport {
+export function importAll(db: Db, input: unknown, now = Date.now()): ImportReport {
   const data = exportSchema.parse(input);
   const report: ImportReport = {
     problems: { inserted: 0, existing: 0 },
@@ -180,8 +203,23 @@ export function importAll(db: Db, input: unknown): ImportReport {
     sessions: { inserted: 0, existing: 0, conflicts: 0 },
     submissions: { inserted: 0, existing: 0 },
     notes: { inserted: 0, identical: 0, conflictsKeptAsRevision: 0 },
+    settings: { status: "missing", replacedByDefaults: [] },
+    postponements: { applied: 0 },
+    snapshots: { inserted: 0 },
   };
   db.transaction((tx) => {
+    // Settings first: the time zone and SRS intervals decide the review dates recomputed below.
+    if (getMeta(tx, "settings")) report.settings.status = "kept";
+    else if (data.settings !== undefined) {
+      const { settings, dropped } = normalizeSettings(data.settings);
+      report.settings.replacedByDefaults = dropped;
+      if (dropped.includes("(all)")) report.settings.status = "invalid";
+      else {
+        setMeta(tx, "settings", JSON.stringify(settings));
+        report.settings.status = "imported";
+      }
+    }
+
     const pid = (slug: string) => {
       const p = getProblemBySlug(tx, slug);
       if (!p) throw new Error(`Import references unknown problem ${slug}`);
@@ -258,9 +296,11 @@ export function importAll(db: Db, input: unknown): ImportReport {
         assignmentIdMap.set(id as number, row.id);
         report.assignments.inserted++;
       }
-      // Imported days count as already allocated.
+      // Imported days up to today count as already allocated. A future day that holds a task
+      // (moved or postponed there) still gets its own allocation when it arrives.
+      const today = todayFor(tx, now);
       for (const a of tx.select().from(assignments).all()) {
-        if (a.planId != null) tx.insert(planDays).values({ planId: a.planId, date: a.scheduledDate, newAllocatedAt: Date.now(), srsAllocatedAt: Date.now() }).onConflictDoNothing().run();
+        if (a.planId != null && a.scheduledDate <= today) tx.insert(planDays).values({ planId: a.planId, date: a.scheduledDate, newAllocatedAt: now, srsAllocatedAt: now }).onConflictDoNothing().run();
       }
     }
 
@@ -320,7 +360,26 @@ export function importAll(db: Db, input: unknown): ImportReport {
       tx.insert(problemNoteRevisions).values({ problemId: pid(r.problemSlug as string), snapshot: r.snapshot, createdAt: (r.createdAt as number) ?? Date.now() }).run();
     }
     for (const id of touched) recomputeReviewState(tx, id);
-    if (!getMeta(tx, "settings") && (input as { settings?: unknown }).settings) setMeta(tx, "settings", JSON.stringify((input as { settings: unknown }).settings));
+    // Re-apply postponements on top of the re-derived dates, with the same rules as locally:
+    // it only ever moves a review later, a local postponement wins, and a session that ended
+    // after it was set supersedes it.
+    for (const p of data.reviewPostponements) {
+      const problemId = pid(p.problemSlug);
+      const rs = tx.select().from(reviewState).where(eq(reviewState.problemId, problemId)).get();
+      if (!rs?.nextDueDate || rs.postponedTo || p.postponedTo <= rs.nextDueDate) continue;
+      const superseded = tx
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(eq(sessions.problemId, problemId), eq(sessions.status, "completed"), gte(sessions.endedAt, p.postponedAt)))
+        .get();
+      if (superseded) continue;
+      tx.update(reviewState).set({ nextDueDate: p.postponedTo, postponedTo: p.postponedTo, updatedAt: p.postponedAt }).where(eq(reviewState.problemId, problemId)).run();
+      report.postponements.applied++;
+    }
+    for (const s of data.dailySnapshots) {
+      const r = tx.insert(dailySnapshots).values(s).onConflictDoNothing().run();
+      report.snapshots.inserted += r.changes;
+    }
     bumpRevision(tx);
   });
   return report;
