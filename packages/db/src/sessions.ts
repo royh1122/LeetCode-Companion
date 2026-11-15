@@ -397,6 +397,8 @@ export function finishSession(db: Db, id: string, reflection: Reflection, endedA
     const extraPause = s.status === "paused" && s.pausedAt != null ? Math.max(0, end - s.pausedAt) : 0;
     const rec = recommendNextReview(tx, s.problemId, reflection.outcome, endedDate);
     const overridden = !!reflection.nextReviewDate && reflection.nextReviewDate !== rec.date;
+    // The date picker only offers later days; enforce it here too (stale pages, the extension).
+    if (overridden && reflection.nextReviewDate! <= endedDate) throw new DomainError("past_date", "Pick a review date after the day the session ends.");
     tx.update(sessions)
       .set({
         status: "completed",
@@ -536,9 +538,12 @@ export function logManualAttempt(
     assignmentId?: number | null;
     type?: SessionType;
   },
+  now = Date.now(),
 ): Session {
   return db.transaction((tx) => {
     const settings = getAppSettings(tx);
+    // A past attempt can't be in the future (the form limits this too, but only in the browser).
+    if (input.date > toLocalDate(now, settings.timeZone)) throw new DomainError("future_date", "A past attempt can't be dated after today.");
     const { start } = localDateBounds(input.date, settings.timeZone);
     const startedAt = start + 12 * 3_600_000;
     const durationMs = input.durationMin != null ? Math.round(input.durationMin * 60_000) : null;

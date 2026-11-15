@@ -114,7 +114,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                   actions={<ManualSubmissionForm sessionId={s.id} />}
                 />
                 <div className="space-y-3 p-4">
-                  <SubmissionList subs={s.submissions} />
+                  <SubmissionList subs={s.submissions} timeZone={settings.timeZone} />
                   {detail.unattributedForProblem.length ? (
                     <div className="rounded-md border border-dashed border-border p-3 text-xs">
                       <p className="mb-2 text-muted">Unlinked submissions for this problem (the extension couldn&apos;t tell which session they belong to):</p>
@@ -122,7 +122,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                         {detail.unattributedForProblem.map((u) => (
                           <li key={u.id} className="flex flex-wrap items-center gap-2">
                             <span>{u.verdict}</span>
-                            <span className="text-muted">{formatDateTime(u.submittedAt)}</span>
+                            <span className="text-muted">{formatDateTime(u.submittedAt, settings.timeZone)}</span>
                             <LinkSubmission submissionId={u.id} options={[{ id: s.id, label: "This session" }]} />
                           </li>
                         ))}
@@ -144,6 +144,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                     timing={timing}
                     interrupted={interrupted}
                     initialNotes={s.notes ?? ""}
+                    timeZone={settings.timeZone}
                   />
                 </div>
               </Card>
@@ -197,7 +198,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                     </Reveal>
                     <Reveal sessionId={s.id} what="code" label="Previous code" already={s.revealedCode}>
                       {previousCode?.code ? (
-                        <CodeBlock code={previousCode.code} lang={previousCode.language} maxHeight={360} header={`${previousCode.verdict} · ${formatDateTime(previousCode.submittedAt)}`} />
+                        <CodeBlock code={previousCode.code} lang={previousCode.language} maxHeight={360} header={`${previousCode.verdict} · ${formatDateTime(previousCode.submittedAt, settings.timeZone)}`} />
                       ) : (
                         <p className="text-xs text-muted">No previous code captured.</p>
                       )}
@@ -252,7 +253,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                 <span className="font-mono">{[s.timeComplexity && `time ${s.timeComplexity}`, s.spaceComplexity && `space ${s.spaceComplexity}`].filter(Boolean).join(" · ")}</span>
               </p>
             ) : null}
-            <SubmissionList subs={s.submissions} />
+            <SubmissionList subs={s.submissions} timeZone={settings.timeZone} />
             <div className="flex flex-wrap items-start gap-2">
               <Link href={`/problems/${p.slug}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
                 View full history

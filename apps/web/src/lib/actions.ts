@@ -14,6 +14,7 @@ import {
   toLocalDate,
   type LocalDate,
 } from "@lcc/shared";
+import { deepMerge } from "./diff";
 import { db, log } from "./server";
 
 /**
@@ -312,8 +313,13 @@ export async function addProblemBySlug(input: string, title?: string) {
 }
 
 // ---- Settings / data ----
+/** `patch` holds only the changed fields, nested ones included (e.g. { srs: { maxIntervalDays } }). */
 export async function updateSettingsAction(patch: unknown) {
-  return wrap(() => void core.updateAppSettings(db(), appSettingsSchema.partial().parse(patch)));
+  return wrap(() => {
+    const p = z.record(z.string(), z.unknown()).parse(patch);
+    const d = db();
+    core.updateAppSettings(d, appSettingsSchema.parse(deepMerge(core.getAppSettings(d), p)));
+  });
 }
 export async function rotateTokenAction() {
   return wrap(() => core.rotateExtensionToken(db()));

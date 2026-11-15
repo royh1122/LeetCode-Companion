@@ -13,7 +13,8 @@ export const metadata = { title: "History" };
 export default async function HistoryPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   const d = db();
-  const tz = getAppSettings(d).timeZone;
+  const settings = getAppSettings(d);
+  const tz = settings.timeZone;
   const f: HistoryFilters = {
     q: sp.q || undefined,
     outcome: sp.outcome || undefined,
@@ -24,10 +25,11 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   };
   const rows = listSessionHistory(d, f);
   const mistakes = listMistakes(d, 40);
-  // Recurring mistakes: group by primary pattern.
+  // Recurring mistakes: group by primary pattern, or one plain list while patterns are hidden
+  // (a pattern heading would give away the approach).
   const byPattern = new Map<string, typeof mistakes>();
   for (const m of mistakes) {
-    const k = m.p.patterns[0] ?? "Other";
+    const k = settings.showPatterns ? (m.p.patterns[0] ?? "Other") : "";
     byPattern.set(k, [...(byPattern.get(k) ?? []), m]);
   }
   const active = Object.values(f).some(Boolean);
@@ -123,19 +125,21 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         </Card>
 
         <Card>
-          <CardHeader title="Recurring mistakes" description="Mistakes and struggles you wrote down, grouped by pattern." />
+          <CardHeader title="Recurring mistakes" description={settings.showPatterns ? "Mistakes and struggles you wrote down, grouped by pattern." : "Mistakes and struggles you wrote down, newest first."} />
           {byPattern.size ? (
             <div className="divide-y divide-border">
               {[...byPattern.entries()]
                 .sort((a, b) => b[1].length - a[1].length)
                 .map(([pattern, items]) => (
                   <div key={pattern} className="px-4 py-3">
-                    <div className="mb-1.5 flex items-center justify-between text-xs font-medium">
-                      {pattern}
-                      <span className="tabular text-subtle">{items.length}</span>
-                    </div>
+                    {pattern ? (
+                      <div className="mb-1.5 flex items-center justify-between text-xs font-medium">
+                        {pattern}
+                        <span className="tabular text-subtle">{items.length}</span>
+                      </div>
+                    ) : null}
                     <ul className="space-y-1.5 text-xs">
-                      {items.slice(0, 5).map((m) => (
+                      {items.slice(0, pattern ? 5 : 15).map((m) => (
                         <li key={m.s.id}>
                           <Link href={`/problems/${m.p.slug}`} className="text-muted hover:underline">
                             {m.p.title}

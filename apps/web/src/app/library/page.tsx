@@ -16,17 +16,17 @@ export const metadata = { title: "Question library" };
 export default async function LibraryPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   const d = db();
+  const settings = getAppSettings(d);
   const filters: LibraryFilters = {
     q: sp.q,
     difficulty: sp.difficulty || undefined,
-    topic: sp.topic || undefined,
+    topic: (settings.showPatterns && sp.topic) || undefined,
     list: sp.list || undefined,
     mastery: sp.mastery || undefined,
     due: (sp.due as LibraryFilters["due"]) || undefined,
     practiced: (sp.practiced as LibraryFilters["practiced"]) || undefined,
     sort: (sp.sort as LibraryFilters["sort"]) || undefined,
   };
-  const settings = getAppSettings(d);
   const rows = searchLibrary(d, settings, filters);
   const lists = listStudyLists(d);
   const { patterns, topics } = allPatternsAndTopics(d);
@@ -61,6 +61,8 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
             </option>
           ))}
         </Select>
+        {/* Topics and patterns hint at the approach: no filter while they're hidden (Settings). */}
+        {settings.showPatterns ? (
         <Select name="topic" defaultValue={sp.topic ?? ""} aria-label="Topic or pattern" className="w-auto max-w-48">
           <option value="">Any topic</option>
           <optgroup label="Patterns">
@@ -78,6 +80,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
             ))}
           </optgroup>
         </Select>
+        ) : null}
         <Select name="mastery" defaultValue={sp.mastery ?? ""} aria-label="Mastery" className="w-auto">
           <option value="">Any mastery</option>
           {MASTERY_STATES.map((m) => (

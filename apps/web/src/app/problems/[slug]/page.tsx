@@ -191,7 +191,7 @@ export default async function ProblemPage({ params }: { params: Promise<{ slug: 
                             ) : null}
                             {s.difficultyRating ? <span>Felt {s.difficultyRating}/5</span> : null}
                           </div>
-                          <SubmissionList subs={s.submissions} />
+                          <SubmissionList subs={s.submissions} timeZone={tz} />
                           <div className="flex flex-wrap items-center gap-2">
                             {["in_progress", "paused"].includes(s.status) ? (
                               <Link href={`/sessions/${s.id}`} className={buttonVariants({ size: "sm", variant: "primary" })}>

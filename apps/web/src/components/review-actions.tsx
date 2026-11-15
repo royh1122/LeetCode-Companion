@@ -65,6 +65,8 @@ export function PullEarly({ available }: { available: number }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   if (!available) return null;
+  // The server takes at most 50 at a time (pullEarlyReviewsAction).
+  const n = Math.min(available, 50);
   return (
     <span className="flex items-center gap-2">
       {msg ? <span className="text-xs text-muted">{msg}</span> : null}
@@ -73,12 +75,12 @@ export function PullEarly({ available }: { available: number }) {
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await pullEarlyReviewsAction(available);
+            const r = await pullEarlyReviewsAction(n);
             setMsg(r.ok ? `Added ${r.data} to today` : r.error);
           })
         }
       >
-        Do {available} early
+        Do {n} early
       </Button>
     </span>
   );

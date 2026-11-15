@@ -100,8 +100,9 @@ export function listSessionHistory(db: Db, f: HistoryFilters = {}, now = Date.no
   if (f.hints === "yes") conds.push(eq(sessions.hintsUsed, true));
   if (f.hints === "no") conds.push(eq(sessions.hintsUsed, false));
   if (f.q) {
-    const q = `%${f.q.toLowerCase().replace(/^#/, "")}%`;
-    conds.push(sql`(lower(${problems.title}) like ${q} or ${problems.frontendId} = ${f.q.replace(/^#/, "")} or lower(coalesce(${sessions.notes},'') || ' ' || coalesce(${sessions.mistakes},'') || ' ' || coalesce(${sessions.struggles},'') || ' ' || coalesce(${sessions.takeaway},'')) like ${q})`);
+    // % and _ are LIKE wildcards: escape them so "100%" or "two_sum" match literally.
+    const q = `%${f.q.toLowerCase().replace(/^#/, "").replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    conds.push(sql`(lower(${problems.title}) like ${q} escape '\\' or ${problems.frontendId} = ${f.q.replace(/^#/, "")} or lower(coalesce(${sessions.notes},'') || ' ' || coalesce(${sessions.mistakes},'') || ' ' || coalesce(${sessions.struggles},'') || ' ' || coalesce(${sessions.takeaway},'')) like ${q} escape '\\')`);
   }
   const rows = db
     .select({ s: sessions, p: problems })

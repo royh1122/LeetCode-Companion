@@ -57,6 +57,7 @@ import {
   getRevision,
   getExtensionContext,
   postponeReview,
+  listSessionHistory,
   updateAppSettings,
   getAppSettings,
   getMeta,
@@ -1023,6 +1024,31 @@ describe("export / import", () => {
     const target2 = openDb(":memory:", { skipBackup: true });
     importAll(target2, { ...data, settings: "garbage" });
     expect(getMeta(target2, "settings")).toBeNull();
+  });
+});
+
+describe("history search", () => {
+  it("date limits hold on the server, not only in the browser", () => {
+    const db = freshDb();
+    const p = getProblemBySlug(db, "two-sum")!;
+    expect(() => logManualAttempt(db, { problemId: p.id, date: addDays(MON, 1), outcome: "independent" }, at(MON, 12))).toThrow(/after today/);
+    expect(logManualAttempt(db, { problemId: p.id, date: MON, outcome: "independent" }, at(MON, 12)).endedDate).toBe(MON);
+    const s = startSession(db, { problemId: p.id, origin: "dashboard" }, at(addDays(MON, 1), 10)).session;
+    // The review date must come after the day the session ends.
+    expect(() => finishSession(db, s.id, { outcome: "independent", hintsUsed: false, nextReviewDate: addDays(MON, 1) }, at(addDays(MON, 1), 11))).toThrow(/after the day/);
+    expect(finishSession(db, s.id, { outcome: "independent", hintsUsed: false, nextReviewDate: addDays(MON, 2) }, at(addDays(MON, 1), 11)).nextReviewDate).toBe(addDays(MON, 2));
+  });
+
+  it("treats % and _ in the search text literally", () => {
+    const db = freshDb();
+    const a = getProblemBySlug(db, "two-sum")!;
+    const b = db.select().from(schema.problems).all().find((p) => p.id !== a.id)!;
+    logManualAttempt(db, { problemId: a.id, date: MON, outcome: "independent", notes: "100% sure: use a_map" });
+    logManualAttempt(db, { problemId: b.id, date: MON, outcome: "independent", notes: "1000 cases, amap" });
+    const hits = (q: string) => listSessionHistory(db, { q }).map((r) => r.problem.id);
+    expect(hits("100%")).toEqual([a.id]);
+    expect(hits("a_map")).toEqual([a.id]);
+    expect(hits("amap")).toEqual([b.id]);
   });
 });
 

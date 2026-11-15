@@ -10,10 +10,11 @@ import { Button, Input, Label, Select, Textarea } from "./ui";
 function useRun() {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, ok = "Done") =>
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, ok = "Done", after?: (worked: boolean) => void) =>
     start(async () => {
       const r = await fn();
       setMsg(r.ok ? { ok: true, text: ok } : { ok: false, text: r.error ?? "Failed" });
+      after?.(r.ok);
     });
   return { pending, msg, run };
 }
@@ -46,16 +47,27 @@ export function LogPastAttempt({ problemId, today }: { problemId: number; today:
   const { pending, msg, run } = useRun();
   if (!open)
     return (
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
-        <History /> Log a past attempt / mark completed
-      </Button>
+      <span className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+          <History /> Log a past attempt / mark completed
+        </Button>
+        {msg?.ok ? <span className="text-xs text-good">{msg.text}</span> : null}
+      </span>
     );
   return (
     <form
       className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[auto_auto_auto_1fr_auto]"
       onSubmit={(e) => {
         e.preventDefault();
-        run(() => logPastAttempt({ problemId, date, outcome, durationMin: minutes ? Number(minutes) : null, notes: notes || undefined }), "Logged");
+        // On success: close and reset, so a second Save can't log the same attempt twice.
+        run(() => logPastAttempt({ problemId, date, outcome, durationMin: minutes ? Number(minutes) : null, notes: notes || undefined }), "Logged", (worked) => {
+          if (!worked) return;
+          setOpen(false);
+          setDate(today);
+          setOutcome("independent");
+          setMinutes("");
+          setNotes("");
+        });
       }}
     >
       <div className="space-y-1">
@@ -95,13 +107,21 @@ export function LogPastAttempt({ problemId, today }: { problemId: number; today:
   );
 }
 
+/** Same limit as the server (setProblemPatterns). */
+const MAX_PATTERNS = 12;
+
 export function PatternsEditor({ problemId, patterns, suggestions }: { problemId: number; patterns: string[]; suggestions: string[] }) {
   const [list, setList] = useState(patterns);
   const [input, setInput] = useState("");
-  const { pending, run } = useRun();
+  const { pending, msg, run } = useRun();
+  const full = list.length >= MAX_PATTERNS;
   const save = (next: string[]) => {
+    const before = list;
     setList(next);
-    run(() => setProblemPatterns(problemId, next));
+    // A refused save (e.g. too many patterns) puts the list back, and the error shows.
+    run(() => setProblemPatterns(problemId, next), "Saved", (worked) => {
+      if (!worked) setList(before);
+    });
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -117,17 +137,28 @@ export function PatternsEditor({ problemId, patterns, suggestions }: { problemId
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (input.trim() && !list.includes(input.trim())) save([...list, input.trim()]);
+          if (input.trim() && !full && !list.includes(input.trim())) save([...list, input.trim()]);
           setInput("");
         }}
       >
-        <input list="pattern-suggestions" value={input} onChange={(e) => setInput(e.target.value)} placeholder="+ pattern" aria-label="Add pattern" className="h-6 w-28 rounded border border-dashed border-border bg-transparent px-1.5 text-xs" />
+        <input
+          list="pattern-suggestions"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={full}
+          maxLength={80}
+          placeholder={full ? `max ${MAX_PATTERNS}` : "+ pattern"}
+          title={full ? `A problem can have up to ${MAX_PATTERNS} patterns. Remove one to add another.` : undefined}
+          aria-label="Add pattern"
+          className="h-6 w-28 rounded border border-dashed border-border bg-transparent px-1.5 text-xs"
+        />
         <datalist id="pattern-suggestions">
           {suggestions.map((s) => (
             <option key={s} value={s} />
           ))}
         </datalist>
       </form>
+      {msg && !msg.ok ? <span className="text-xs text-bad">{msg.text}</span> : null}
     </div>
   );
 }

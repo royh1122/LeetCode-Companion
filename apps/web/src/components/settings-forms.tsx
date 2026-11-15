@@ -4,6 +4,7 @@ import { Download, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import type { AppSettings } from "@lcc/shared";
 import type { TimeZoneGroup } from "@/lib/timezones";
+import { changedFields } from "@/lib/diff";
 import { backupNowAction, importJsonAction, rotateTokenAction, updateSettingsAction } from "@/lib/actions";
 import { CopyButton } from "./code";
 import { Button, Input, Label, Select } from "./ui";
@@ -62,6 +63,8 @@ function BrowserTimeZone({ current, onUse }: { current: string; onUse: (tz: stri
 
 export function GeneralSettingsForm({ settings, timeZones }: { settings: AppSettings; timeZones: TimeZoneGroup[] }) {
   const [s, setS] = useState(settings);
+  // What was last loaded or saved: only fields changed since then are sent.
+  const [saved, setSaved] = useState(settings);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const num = (v: string) => Number(v);
@@ -72,8 +75,11 @@ export function GeneralSettingsForm({ settings, timeZones }: { settings: AppSett
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
+        const patch = changedFields(saved, s, true);
+        if (!Object.keys(patch).length) return setMsg({ ok: true, text: "Nothing changed" });
         start(async () => {
-          const r = await updateSettingsAction(s);
+          const r = await updateSettingsAction(patch);
+          if (r.ok) setSaved(s);
           setMsg(r.ok ? { ok: true, text: "Saved" } : { ok: false, text: r.error });
         });
       }}

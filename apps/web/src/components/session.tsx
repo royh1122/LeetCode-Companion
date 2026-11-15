@@ -22,19 +22,22 @@ export interface SessionTiming {
 }
 
 export function SessionTimer({ t }: { t: SessionTiming }) {
-  const [now, setNow] = useState(() => Date.now());
+  // No clock reading during render: the server's and the browser's would differ (hydration
+  // mismatch). The first effect fills it in right after hydration.
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     if (t.status !== "in_progress") return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [t.status]);
-  const wall = elapsedMs(t, now);
+  const wall = now == null ? null : elapsedMs(t, now);
   return (
     <div className="flex items-end gap-6">
       <div>
         <div className="text-xs text-muted">{t.status === "paused" ? "Paused" : "Elapsed (minus pauses)"}</div>
         <div className={cn("tabular font-mono text-3xl font-semibold tracking-tight", t.status === "paused" && "text-muted")} aria-live="off">
-          {formatClock(wall)}
+          {wall == null ? "--:--" : formatClock(wall)}
         </div>
       </div>
       <div className="pb-1 text-xs text-muted">
@@ -49,14 +52,22 @@ export function SessionControls({ id, status }: { id: string; status: string }) 
   const router = useRouter();
   const [pending, start] = useTransition();
   const [confirm, setConfirm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** Runs an action and shows its error; returns whether it worked. */
+  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
+    setError(null);
+    const r = await fn();
+    if (!r.ok) setError(r.error ?? "Failed");
+    return r.ok;
+  };
   return (
     <div className="flex flex-wrap items-center gap-2">
       {status === "paused" ? (
-        <Button size="sm" disabled={pending} onClick={() => start(async () => void (await resumeSession(id)))}>
+        <Button size="sm" disabled={pending} onClick={() => start(async () => void (await act(() => resumeSession(id))))}>
           <Play /> Resume
         </Button>
       ) : (
-        <Button size="sm" disabled={pending} onClick={() => start(async () => void (await pauseSession(id)))}>
+        <Button size="sm" disabled={pending} onClick={() => start(async () => void (await act(() => pauseSession(id))))}>
           <Pause /> Pause
         </Button>
       )}
@@ -69,8 +80,7 @@ export function SessionControls({ id, status }: { id: string; status: string }) 
             disabled={pending}
             onClick={() =>
               start(async () => {
-                await abandonSession(id);
-                router.push("/");
+                if (await act(() => abandonSession(id))) router.push("/");
               })
             }
           >
@@ -85,6 +95,11 @@ export function SessionControls({ id, status }: { id: string; status: string }) 
           <Square /> Abandon
         </Button>
       )}
+      {error ? (
+        <span className="text-xs text-bad" role="alert">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -136,7 +151,9 @@ export function ReflectionForm({
   timing,
   interrupted,
   initialNotes,
+  timeZone,
 }: {
+  timeZone: string;
   sessionId: string;
   recommendations: Record<Outcome, string>;
   /** When an interrupted session would end on an earlier day: the dates counted from that day. */
@@ -309,7 +326,7 @@ export function ReflectionForm({
       {interrupted ? (
         <label className="flex items-start gap-2 rounded-md bg-warn-soft p-2.5 text-xs text-warn">
           <input type="checkbox" checked={endAtLastActivity} onChange={(e) => setEndAtLastActivity(e.target.checked)} className="mt-0.5" />
-          This session looks interrupted. End it at the last recorded activity ({formatDateTime(timing.lastActivityAt)}) instead of now, so the duration isn&apos;t inflated.
+          This session looks interrupted. End it at the last recorded activity ({formatDateTime(timing.lastActivityAt, timeZone)}) instead of now, so the duration isn&apos;t inflated.
         </label>
       ) : null}
 
@@ -336,9 +353,20 @@ export function ManualSubmissionForm({ sessionId }: { sessionId: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   if (!open)
     return (
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
-        + Log a submission manually
-      </Button>
+      <span className="flex items-center gap-2">
+        {/* Shown here: a successful save closes the form, which would hide a message inside it. */}
+        {msg ? <span className="text-xs text-good">{msg}</span> : null}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setMsg(null);
+            setOpen(true);
+          }}
+        >
+          + Log a submission manually
+        </Button>
+      </span>
     );
   return (
     <form
@@ -373,7 +401,7 @@ export function ManualSubmissionForm({ sessionId }: { sessionId: string }) {
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel
         </Button>
-        {msg ? <span className="text-xs text-muted">{msg}</span> : null}
+        {msg ? <span className="text-xs text-bad">{msg}</span> : null}
       </div>
     </form>
   );
@@ -395,7 +423,8 @@ export interface SubmissionView {
   details: Record<string, string | null> | null;
 }
 
-export function SubmissionList({ subs, showRuns = true }: { subs: SubmissionView[]; showRuns?: boolean }) {
+/** `timeZone`: the app's configured zone; without it the server and the browser could format times differently. */
+export function SubmissionList({ subs, showRuns = true, timeZone }: { subs: SubmissionView[]; showRuns?: boolean; timeZone: string }) {
   const [openId, setOpenId] = useState<number | null>(null);
   const list = showRuns ? subs : subs.filter((s) => s.kind === "submit");
   if (!list.length) return <p className="text-xs text-muted">No submissions recorded.</p>;
@@ -407,7 +436,7 @@ export function SubmissionList({ subs, showRuns = true }: { subs: SubmissionView
             <span className="tabular w-5 text-subtle">{i + 1}</span>
             {s.kind === "run" ? <Badge tone="outline">Run</Badge> : <VerdictBadge v={s.verdict} />}
             {s.kind === "run" ? <span className="text-muted">{s.verdict}</span> : null}
-            <span className="text-muted">{formatDateTime(s.submittedAt)}</span>
+            <span className="text-muted">{formatDateTime(s.submittedAt, timeZone)}</span>
             <span className="text-muted">{s.language ?? ""}</span>
             {s.totalTestcases ? (
               <span className="tabular text-muted">

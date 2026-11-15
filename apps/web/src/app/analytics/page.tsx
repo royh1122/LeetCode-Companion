@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getAnalytics } from "@lcc/db";
+import { getAnalytics, getAppSettings } from "@lcc/db";
 import { MASTERY_LABELS, MASTERY_STATES, formatDuration } from "@lcc/shared";
 import { AnalyticsCharts } from "@/components/analytics-charts";
 import { Card, CardHeader, PageHeader, Stat } from "@/components/ui";
@@ -38,6 +38,7 @@ function MasteryBar({ counts, total }: { counts: Record<string, number>; total: 
 export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ by?: string }> }) {
   const { by } = await searchParams;
   const a = getAnalytics(db(), { groupBy: by === "tag" ? "tag" : "pattern" });
+  const { mastery } = getAppSettings(db());
   const u = a.unique;
   const s = a.sessionLevel;
   return (
@@ -73,7 +74,10 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           </span>
         </div>
         <MasteryBar counts={a.masteryCounts} total={u.totalProblems} />
-        <p className="mt-2 text-[11px] text-subtle">Mastered requires 3 independent solves in a row with the last after a ≥14-day gap (configurable in Settings). Accepted alone never counts.</p>
+        <p className="mt-2 text-[11px] text-subtle">
+          Mastered requires {mastery.masteryStreak} independent solve{mastery.masteryStreak === 1 ? "" : "s"} in a row
+          {mastery.masteryMinGapDays > 0 ? ` with the last after a ≥${mastery.masteryMinGapDays}-day gap` : ""} (configurable in Settings). Accepted alone never counts.
+        </p>
       </Card>
 
       <Card>

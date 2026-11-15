@@ -16,6 +16,7 @@ import {
   skipDayAction,
   updatePlanAction,
 } from "@/lib/actions";
+import { changedFields } from "@/lib/diff";
 import { Button, Input, Label, Select } from "./ui";
 
 function useAction() {
@@ -150,6 +151,8 @@ export function PlanSettingsForm({
   const [planName, setPlanName] = useState(name);
   const [start, setStart] = useState(startDate);
   const { pending, run, error, ok } = useAction();
+  // What was last loaded or saved: only changed fields are sent (see changedFields).
+  const [saved, setSaved] = useState({ ...settings, name, startDate });
   const setQuota = (wd: number, v: number) => setS((x) => ({ ...x, newPerWeekday: x.newPerWeekday.map((q, i) => (i === wd ? v : q)) }));
   const order = [1, 2, 3, 4, 5, 6, 0];
   const reviewFor = (wd: number) => s.reviewDays.find((r) => r.weekday === wd);
@@ -165,7 +168,14 @@ export function PlanSettingsForm({
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
-        run(() => updatePlanAction(planId, { ...s, name: planName, startDate: start }), "Saved");
+        const next = { ...s, name: planName, startDate: start };
+        const patch = changedFields(saved, next);
+        if (!Object.keys(patch).length) return;
+        run(async () => {
+          const r = await updatePlanAction(planId, patch);
+          if (r.ok) setSaved(next);
+          return r;
+        }, "Saved");
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">

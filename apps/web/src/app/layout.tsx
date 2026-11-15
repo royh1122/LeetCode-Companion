@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import { Sidebar } from "@/components/sidebar";
+import { connection } from "next/server";
+import { getRevision } from "@lcc/db";
 import { LiveRefresh } from "@/components/live-refresh";
+import { db } from "@/lib/server";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,6 +14,12 @@ export const metadata: Metadata = {
 };
 
 const themeScript = `(function(){try{var t=localStorage.getItem("lcc-theme");var d=t==="dark"||(t!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark")}catch(e){}})()`;
+
+/** Read per request (never at build time), so it is the revision the page was rendered from. */
+async function CurrentRevision() {
+  await connection();
+  return <LiveRefresh revision={getRevision(db())} />;
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -26,7 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="mx-auto w-full max-w-[1200px] px-4 pb-10 pt-14 md:px-8 md:py-8">{children}</div>
           </main>
         </div>
-        <LiveRefresh />
+        <CurrentRevision />
       </body>
     </html>
   );
