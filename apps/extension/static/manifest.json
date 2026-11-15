@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LeetCode Companion",
   "short_name": "LC Companion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tracks your own LeetCode practice sessions and submissions into your local LeetCode Companion dashboard.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "sidePanel", "alarms"],
