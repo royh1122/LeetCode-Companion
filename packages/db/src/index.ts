@@ -14,3 +14,5 @@ export * from "./sync";
 export * from "./analytics";
 export * from "./transfer";
 export * from "./extension";
+export * from "./maintenance";
+export * from "./undo";

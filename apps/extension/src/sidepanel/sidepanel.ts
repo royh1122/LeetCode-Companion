@@ -233,11 +233,13 @@ function studyPlanCard(sp: NonNullable<PanelState["studyPlan"]>) {
 
 function renderOutcomes(recs: Record<string, string> | null) {
   const box = $("s-outcomes");
+  const checked = outcome ? OUTCOMES.indexOf(outcome) : 0;
   box.replaceChildren(
-    ...OUTCOMES.map((o) =>
+    ...OUTCOMES.map((o, i) =>
       h(
         "button",
-        { role: "radio", "aria-checked": outcome === o ? "true" : "false", onclick: () => ((outcome = o), renderOutcomes(recs)) },
+        // Roving tab stop: Tab reaches the group once; arrow keys move within it (see below).
+        { type: "button", role: "radio", "aria-checked": outcome === o ? "true" : "false", tabindex: i === checked ? "0" : "-1", onclick: () => ((outcome = o), renderOutcomes(recs)) },
         `${OUTCOME_LABELS[o].label}`,
         h("span", { className: "d" }, OUTCOME_LABELS[o].description),
       ),
@@ -330,6 +332,17 @@ $("s-abandon").addEventListener("click", async () => {
 });
 
 $("open-dash").addEventListener("click", () => send({ type: "open-dashboard", path: "/" }));
+
+// Arrow keys move between the outcome options and select them (radio group).
+$("s-outcomes").addEventListener("keydown", (e) => {
+  const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[e.key];
+  if (step === undefined) return;
+  e.preventDefault();
+  const at = outcome ? OUTCOMES.indexOf(outcome) : -1;
+  outcome = OUTCOMES[(at + step + OUTCOMES.length) % OUTCOMES.length]!;
+  renderOutcomes(state?.session?.recommendations ?? null);
+  $("s-outcomes").querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+});
 
 window.addEventListener("keydown", (e) => {
   const tag = (e.target as HTMLElement)?.tagName;

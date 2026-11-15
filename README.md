@@ -144,14 +144,19 @@ After changing extension code, run `npm run ext:build` again and click reload on
 ## Your data, backups and restore
 
 - Everything lives in `data/leetcode-companion.db` (SQLite, WAL mode). Override the location with `LCC_DATA_DIR` (a folder) or `LCC_DB_PATH` (the file; ignored when `LCC_DATA_DIR` is set). Backups go to a `backups` folder next to the database file.
-- **Backups.** Use **Settings → Back up database now** or `npm run db:backup`. A backup is also taken automatically before every schema migration and every JSON import.
-- **Restore.** Stop the dashboard, run `npm run db:restore` with no argument to list backups, then run `npm run db:restore -- data/backups/<file>.db`.
+- **Backups.** Use **Settings → Back up database now** or `npm run db:backup`. A backup is also taken automatically before every schema migration, JSON import and restore, and before deleting a session or submission. Automatic backups are never deleted on their own; **Settings** shows how much space they take and can delete the old ones (keeping the newest 20) when you ask.
+- **Restore.** Stop the dashboard, run `npm run db:restore` with no argument to list backups, then run `npm run db:restore -- data/backups/<file>.db`. Restore refuses while something answers on port 4317 or on `LCC_PORT` if set, but it can't see a dashboard you started on another port: stop every dashboard that uses this database first.
 - **JSON export/import.** Use **Settings → Export JSON** (or `npm run db:export`). Problems are referenced by slug, so an export works in any installation. Import *merges* and never overwrites:
   - sessions and submissions that already exist are skipped;
   - a note that differs from yours is kept as a note revision, so both texts survive;
   - plans are only imported into a database that has none.
 - **Upgrades.** Schema changes ship as Drizzle migrations in `packages/db/drizzle`. They're applied on start with a pre-migration backup. The app never deletes history on its own.
-- **Backups are never pruned.** They contain your code and notes; delete old ones in `data/backups/` by hand when you want the space back.
+- **Backups are never pruned on their own.** They contain your code and notes. Settings can delete old *automatic* ones when you ask (manual backups are never touched); otherwise delete them in `data/backups/` by hand.
+- **Moving to another computer.**
+  1. On the old one, stop the dashboard (`npm run down`), then copy `data/leetcode-companion.db` (or take a fresh `npm run db:backup` and copy that file). Stopping first matters: a copy taken while the dashboard runs can miss recent changes still in the `-wal` file.
+  2. On the new one, set up the app as above (Setup), but don't create a plan. Copy the file to `data/leetcode-companion.db` before the first start, or with the dashboard stopped run `npm run db:restore -- <copied file>`.
+  3. Start the dashboard and pair the extension again (the pairing token comes with the database; the extension on the new computer still needs it pasted in).
+  4. Alternatively, **Settings → Export JSON** on the old computer and **Import JSON** on the new one merges your history into whatever is already there.
 
 ## Updating
 
@@ -178,7 +183,7 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
   - If the session completed a planned task, the task goes back to open. A past spaced-repetition pick expires instead, and the problem is simply due again.
   - The problem's review state and mastery are re-calculated from the sessions that remain.
   - Only finished or abandoned sessions can be deleted; abandon an open one first.
-- A database backup (`data/backups/…-pre-delete-*.db`) is taken before every delete. To undo one, use `npm run db:restore`.
+- A database backup (`…/backups/…-pre-delete-*.db`, next to the database) is taken before deleting a session or a submission. To undo one, use `npm run db:restore`. Rescheduling, skipping, postponing and removing from the queue can be undone right away with the **Undo** button that appears after them.
 
 ## What is verified vs. assumed
 

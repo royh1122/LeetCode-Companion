@@ -18,7 +18,8 @@ export interface ReviewStateCore {
  *
  * Policy (all numbers configurable in Settings):
  *  - failed / needed hints → base interval (1 day). Streak resets; history is kept.
- *    A lapse is only counted if the problem had previously been solved independently.
+ *    A lapse is counted only if the problem was in the review stage or on a success streak
+ *    (it had been going well), not for a first failure while still learning.
  *  - struggled → base (3 days) on first sight; after a long interval it shrinks to
  *    prev × struggledFactor, but never below the base and never above prev.
  *  - independent → base (7) the first time, then grows prev × independentMultiplier.

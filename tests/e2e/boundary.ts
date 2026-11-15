@@ -56,12 +56,20 @@ async function main() {
     if (r.status !== 403 && !r.body.includes("Invalid Server Actions request")) throw new Error(`${name}: refused for another reason (${r.status}: ${r.body.slice(0, 200)})`);
     console.log(`✓ ${name} → refused (${r.status})`);
   }
+  // Pages: another site may link to the dashboard, but not load a page as an image or a frame
+  // (rendering Today plans the day).
+  const fromSite = (mode: string, dest: string) => ({ Host: host, "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": mode, "Sec-Fetch-Dest": dest });
+  expectStatus("page loaded as an image by another site", await request("/", { headers: fromSite("no-cors", "image") }), 403);
+  expectStatus("page framed by another site", await request("/", { headers: fromSite("navigate", "iframe") }), 403);
+  expectStatus("link from another site (top-level navigation)", await request("/", { headers: fromSite("navigate", "document") }), 200);
   // Headers on a normal page.
   const page = await request("/", { headers: { Host: host } });
   expectStatus("dashboard page", page, 200);
   if (page.headers["x-frame-options"] !== "DENY") throw new Error(`X-Frame-Options: ${page.headers["x-frame-options"]}`);
   if (page.headers["access-control-allow-origin"]) throw new Error("CORS header sent");
-  console.log("✓ X-Frame-Options: DENY, no CORS headers");
+  const csp = String(page.headers["content-security-policy"] ?? "");
+  for (const d of ["connect-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "form-action 'self'"]) if (!csp.includes(d)) throw new Error(`Content-Security-Policy lacks ${d}: ${csp}`);
+  console.log("✓ X-Frame-Options: DENY, Content-Security-Policy, no CORS headers");
   console.log("Security boundary OK");
 }
 

@@ -18,6 +18,7 @@ import {
 } from "@/lib/actions";
 import { changedFields } from "@/lib/diff";
 import { Button, Input, Label, Select } from "./ui";
+import { offerUndo } from "./undo-toast";
 
 function useAction() {
   const [pending, start] = useTransition();
@@ -339,7 +340,20 @@ export function QueueControls({ planId, problemId, status }: { planId: number; p
       {b("up", <ArrowUp />, "Move up")}
       {b("down", <ArrowDown />, "Move down")}
       {b("bottom", <ChevronsDown />, "Move to bottom")}
-      <Button size="icon-sm" variant="ghost" disabled={pending} aria-label="Remove from queue" title="Remove from queue" onClick={() => run(() => removeFromQueueAction(planId, problemId))}>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        disabled={pending}
+        aria-label="Remove from queue"
+        title="Remove from queue"
+        onClick={() =>
+          run(async () => {
+            const r = await removeFromQueueAction(planId, problemId);
+            if (r.ok) offerUndo(r.data.undo, "Removed from the queue.");
+            return r;
+          })
+        }
+      >
         <Trash2 />
       </Button>
       {error ? <span className="text-[11px] text-bad">{error}</span> : null}

@@ -4,6 +4,7 @@ import { getAppSettings, listMistakes, listSessionHistory, type HistoryFilters }
 import { OUTCOMES, OUTCOME_LABELS, formatDuration } from "@lcc/shared";
 import { OutcomeBadge, SESSION_TYPE_LABEL, SessionTypeBadge, VerdictBadge } from "@/components/badges";
 import { Badge, Card, CardHeader, EmptyState, Input, PageHeader, Select, buttonVariants } from "@/components/ui";
+import { limitParam, ShowMore } from "@/components/show-more";
 import { db } from "@/lib/server";
 import { formatDateTime } from "@/lib/utils";
 
@@ -23,7 +24,11 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
     from: sp.from || undefined,
     to: sp.to || undefined,
   };
-  const rows = listSessionHistory(d, f);
+  const limit = limitParam(sp.limit, 300);
+  // One extra row tells whether there are more.
+  const fetched = listSessionHistory(d, { ...f, limit: limit + 1 });
+  const more = fetched.length > limit;
+  const rows = fetched.slice(0, limit);
   const mistakes = listMistakes(d, 40);
   // Recurring mistakes: group by primary pattern, or one plain list while patterns are hidden
   // (a pattern heading would give away the approach).
@@ -124,6 +129,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
           ) : (
             <EmptyState title={active ? "No sessions match" : "No sessions yet"}>{active ? "Try clearing a filter." : "Finished sessions show up here."}</EmptyState>
           )}
+          {more ? <ShowMore shown={limit} total={null} step={300} params={sp} path="/history" /> : null}
         </Card>
 
         <Card>

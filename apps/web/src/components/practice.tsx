@@ -3,10 +3,11 @@
 import { CalendarClock, Loader2, MoreHorizontal, Play, SkipForward } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { addDays } from "@lcc/shared";
+import { addDays, formatLocalDate } from "@lcc/shared";
 import { rescheduleAction, skipAssignmentAction, startPractice } from "@/lib/actions";
 import { cn } from "@/lib/utils";
 import { Button, Input } from "./ui";
+import { offerUndo } from "./undo-toast";
 
 /**
  * Start (or resume) a session: creates it on the server, opens the problem on
@@ -66,24 +67,40 @@ export function AssignmentMenu({ assignmentId, today, canSkip }: { assignmentId:
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
+    // Keyboard users land in the menu, and Escape brings them back to its button.
+    panelRef.current?.querySelector<HTMLElement>("button, input")?.focus();
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    // Tabbing out of the menu closes it, like clicking elsewhere.
+    const leave = (e: FocusEvent) => {
+      if (ref.current && e.relatedTarget instanceof Node && !ref.current.contains(e.relatedTarget)) setOpen(false);
+    };
+    const box = ref.current;
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
+    box?.addEventListener("focusout", leave);
     return () => {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
+      box?.removeEventListener("focusout", leave);
     };
   }, [open]);
   const go = (to: string) =>
     start(async () => {
       const r = await rescheduleAction(assignmentId, to);
-      if (!r.ok) setError(r.error);
-      else setOpen(false);
+      if (!r.ok) return setError(r.error);
+      setOpen(false);
+      offerUndo(r.data.undo, `Moved to ${formatLocalDate(to)}.`);
     });
   const nextMonday = (() => {
     let d = addDays(today, 1);
@@ -92,11 +109,11 @@ export function AssignmentMenu({ assignmentId, today, canSkip }: { assignmentId:
   })();
   return (
     <div className="relative" ref={ref}>
-      <Button size="icon-sm" variant="ghost" aria-label="Reschedule or skip" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button ref={toggleRef} size="icon-sm" variant="ghost" aria-label="Reschedule or skip" aria-expanded={open} aria-haspopup="true" onClick={() => setOpen((o) => !o)}>
         <MoreHorizontal />
       </Button>
       {open ? (
-        <div className="absolute right-0 top-8 z-20 w-60 rounded-lg border border-border bg-surface p-2 shadow-lg">
+        <div ref={panelRef} role="group" aria-label="Reschedule or skip" className="absolute right-0 top-8 z-20 w-60 rounded-lg border border-border bg-surface p-2 shadow-lg">
           <div className="px-1 pb-1.5 text-xs font-medium text-muted">Reschedule</div>
           <div className="grid grid-cols-3 gap-1">
             {[
@@ -124,8 +141,9 @@ export function AssignmentMenu({ assignmentId, today, canSkip }: { assignmentId:
               onClick={() =>
                 start(async () => {
                   const r = await skipAssignmentAction(assignmentId);
-                  if (!r.ok) setError(r.error);
-                  else setOpen(false);
+                  if (!r.ok) return setError(r.error);
+                  setOpen(false);
+                  offerUndo(r.data.undo, "Skipped.");
                 })
               }
             >

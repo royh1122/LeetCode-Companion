@@ -64,7 +64,9 @@ async function main() {
   await expect(page.getByRole("radio", { name: /Struggled/ })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByText("(recommended)")).toBeVisible();
   await page.getByRole("button", { name: "Finish session" }).click();
-  await page.waitForURL(`${BASE}/`);
+  await page.waitForURL(new RegExp(`^${BASE}/\\?finished=`));
+  // Today says what was scheduled.
+  await expect(page.getByRole("status").filter({ hasText: `Finished ${firstTitle}` })).toContainText(/Struggled · next review/, { timeout: 10000 });
   await expect(newSection.locator("li", { hasText: firstTitle! }).locator(".line-through")).toBeVisible({ timeout: 10000 });
   console.log("finished session; today progress updated");
 
@@ -88,9 +90,13 @@ async function main() {
 
   // 7. Changing schedule settings
   await page.goto(`${BASE}/plan`);
-  await page.getByLabel("New questions on Mon").fill("4");
-  await page.getByRole("button", { name: "Save plan settings" }).click();
-  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  // A click before the page is interactive (dev server) is lost: wait, and retry the save if so.
+  await page.waitForLoadState("networkidle");
+  await expect(async () => {
+    await page.getByLabel("New questions on Mon").fill("4");
+    await page.getByRole("button", { name: "Save plan settings" }).click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 20000 });
 
   // 8. Mobile + dark render
   await page.setViewportSize({ width: 390, height: 844 });

@@ -15,7 +15,11 @@ import type {
   Verdict,
 } from "@lcc/shared";
 
-/** All timestamps are UTC epoch milliseconds. Calendar dates are "YYYY-MM-DD" in the plan's time zone. */
+/**
+ * All timestamps are UTC epoch milliseconds. Calendar dates are "YYYY-MM-DD" in the time zone set
+ * in Settings (`appSettings.timeZone`). `study_plans.time_zone` is recorded when a plan is created
+ * but not used for scheduling.
+ */
 const now = sql`(cast(unixepoch('subsec') * 1000 as integer))`;
 const timestamps = {
   createdAt: integer("created_at").notNull().default(now),

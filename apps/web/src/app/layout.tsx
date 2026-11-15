@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/sidebar";
 import { connection } from "next/server";
 import { getRevision } from "@lcc/db";
 import { LiveRefresh } from "@/components/live-refresh";
+import { UndoToast } from "@/components/undo-toast";
 import { db } from "@/lib/server";
 import "./globals.css";
 
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </main>
         </div>
         <CurrentRevision />
+        <UndoToast />
       </body>
     </html>
   );

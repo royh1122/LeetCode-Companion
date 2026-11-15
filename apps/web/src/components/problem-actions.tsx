@@ -166,6 +166,7 @@ export function PatternsEditor({ problemId, patterns, suggestions }: { problemId
 export function EditSessionForm({
   id,
   notes,
+  struggles,
   mistakes,
   takeaway,
   timeComplexity,
@@ -177,6 +178,7 @@ export function EditSessionForm({
 }: {
   id: string;
   notes: string;
+  struggles: string;
   mistakes: string;
   takeaway: string;
   timeComplexity: string;
@@ -188,6 +190,7 @@ export function EditSessionForm({
 }) {
   const [open, setOpen] = useState(false);
   const [n, setN] = useState(notes);
+  const [st, setSt] = useState(struggles);
   const [m, setM] = useState(mistakes);
   const [t, setT] = useState(takeaway);
   const [tc, setTc] = useState(timeComplexity);
@@ -212,6 +215,7 @@ export function EditSessionForm({
           () =>
             editSession(id, {
               notes: n,
+              struggles: st,
               mistakes: m,
               takeaway: t,
               timeComplexity: tc,
@@ -255,6 +259,7 @@ export function EditSessionForm({
       ) : null}
       <Textarea rows={2} value={n} onChange={(e) => setN(e.target.value)} aria-label="Session notes" placeholder="Notes" />
       <div className="grid gap-2 sm:grid-cols-2">
+        <Textarea rows={2} value={st} onChange={(e) => setSt(e.target.value)} aria-label="Struggles" placeholder="Struggles" maxLength={5000} />
         <Textarea rows={2} value={m} onChange={(e) => setM(e.target.value)} aria-label="Mistakes" placeholder="Mistakes" />
         <Textarea rows={2} value={t} onChange={(e) => setT(e.target.value)} aria-label="Takeaway" placeholder="Takeaway" />
         <Input value={tc} onChange={(e) => setTc(e.target.value)} aria-label="Time complexity" maxLength={200} placeholder="Time complexity, e.g. O(n)" className="font-mono" />

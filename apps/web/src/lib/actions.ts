@@ -15,6 +15,7 @@ import {
 } from "@lcc/shared";
 import { deepMerge } from "./diff";
 import { db, log } from "./server";
+import { putUndo, takeUndo } from "./undo-store";
 
 /**
  * Server actions for the dashboard. Next.js verifies the Origin header for
@@ -212,11 +213,28 @@ export async function logPastAttempt(input: { problemId: number; date: string; o
   });
 }
 
+/** Runs a change to one problem's plan and returns a token for `undoAction`. */
+function undoable(problemId: number, change: () => void): { undo: string } {
+  return { undo: putUndo(core.withUndo(db(), problemId, change)) };
+}
+function assignmentProblem(assignmentId: number): number {
+  const p = core.assignmentProblemId(db(), assignmentId);
+  if (p == null) throw new core.DomainError("not_found", "Assignment not found");
+  return p;
+}
 export async function rescheduleAction(assignmentId: number, to: string) {
-  return wrap(() => core.rescheduleAssignment(db(), assignmentId, date.parse(to)));
+  return wrap(() => undoable(assignmentProblem(assignmentId), () => core.rescheduleAssignment(db(), assignmentId, date.parse(to))));
 }
 export async function skipAssignmentAction(assignmentId: number) {
-  return wrap(() => core.skipAssignment(db(), assignmentId));
+  return wrap(() => undoable(assignmentProblem(assignmentId), () => core.skipAssignment(db(), assignmentId)));
+}
+/** Reverse a reschedule, skip, postpone or queue removal made in the last few minutes. */
+export async function undoAction(token: string) {
+  return wrap(() => {
+    const r = takeUndo(z.string().max(100).parse(token));
+    if (!r) throw new core.DomainError("expired", "Too late to undo this here.");
+    core.applyUndo(db(), r);
+  });
 }
 export async function addToDayAction(problemId: number, on: string, asNew = false) {
   return wrap(() => void core.addAssignment(db(), problemId, date.parse(on), { asNew }));
@@ -229,7 +247,7 @@ export async function restartProblemAction(problemId: number) {
   });
 }
 export async function postponeReviewAction(problemId: number, to: string) {
-  return wrap(() => core.postponeReview(db(), problemId, date.parse(to)));
+  return wrap(() => undoable(problemId, () => core.postponeReview(db(), problemId, date.parse(to))));
 }
 export async function pullMoreReviewsAction(n: number) {
   return wrap(() => core.pullMoreReviews(db(), z.number().int().min(1).max(50).parse(n)));
@@ -296,7 +314,7 @@ export async function enqueueAction(planId: number, problemId: number, where: "f
   return wrap(() => core.enqueueProblem(db(), planId, problemId, where));
 }
 export async function removeFromQueueAction(planId: number, problemId: number) {
-  return wrap(() => core.removeFromQueue(db(), planId, problemId));
+  return wrap(() => undoable(problemId, () => core.removeFromQueue(db(), planId, problemId)));
 }
 
 /** Add a problem that isn't in any list, by slug or URL. Metadata is filled in later if the extension sees the page. */
@@ -330,6 +348,13 @@ export async function backupNowAction() {
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
   }
+}
+/** Delete automatic backups beyond the newest `keep` (Settings, after the user confirms). Manual backups are never touched. */
+export async function pruneBackupsAction(keep: number) {
+  return wrap(() => {
+    const n = z.number().int().min(5).max(1000).parse(keep);
+    return { deleted: core.pruneAutomaticBackups(n).length };
+  });
 }
 export async function importJsonAction(text: string) {
   try {

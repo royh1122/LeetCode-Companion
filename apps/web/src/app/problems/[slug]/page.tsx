@@ -207,6 +207,7 @@ export default async function ProblemPage({ params }: { params: Promise<{ slug: 
                                 <EditSessionForm
                                   id={s.id}
                                   notes={s.notes ?? ""}
+                                  struggles={s.struggles ?? ""}
                                   mistakes={s.mistakes ?? ""}
                                   takeaway={s.takeaway ?? ""}
                                   timeComplexity={s.timeComplexity ?? ""}

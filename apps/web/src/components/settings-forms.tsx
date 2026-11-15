@@ -5,7 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import type { AppSettings } from "@lcc/shared";
 import type { TimeZoneGroup } from "@/lib/timezones";
 import { changedFields } from "@/lib/diff";
-import { backupNowAction, importJsonAction, rotateTokenAction, updateSettingsAction } from "@/lib/actions";
+import { backupNowAction, importJsonAction, pruneBackupsAction, rotateTokenAction, updateSettingsAction } from "@/lib/actions";
 import { CopyButton } from "./code";
 import { Button, Input, Label, Select } from "./ui";
 
@@ -44,6 +44,44 @@ export function TokenBox({ token }: { token: string }) {
         )}
       </div>
     </div>
+  );
+}
+
+/** Deletes old automatic backups after a confirmation. Manual backups stay. */
+export function PruneBackupsButton({ automatic, keep = 20 }: { automatic: number; keep?: number }) {
+  const [pending, start] = useTransition();
+  const [confirm, setConfirm] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  if (automatic <= keep) return msg ? <span className="text-xs text-good">{msg}</span> : null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      {confirm ? (
+        <>
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await pruneBackupsAction(keep);
+                setMsg(r.ok ? `Deleted ${r.data.deleted} old automatic backup(s).` : `Not deleted: ${r.error}`);
+                setConfirm(false);
+              })
+            }
+          >
+            Delete {automatic - keep} oldest automatic backup(s)
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>
+          Keep only the newest {keep} automatic backups…
+        </Button>
+      )}
+      {msg ? <span className="text-xs">{msg}</span> : null}
+    </span>
   );
 }
 

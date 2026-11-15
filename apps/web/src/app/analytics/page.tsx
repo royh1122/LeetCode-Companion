@@ -133,7 +133,12 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
                 <td className="tabular px-2 py-2 text-right">{formatDuration(t.avgDurationMs)}</td>
                 <td className={`tabular px-2 py-2 text-right ${t.overdue ? "text-warn" : ""}`}>{t.overdue}</td>
                 <td className="px-4 py-2">
-                  <div className="flex h-2 w-full gap-[2px] overflow-hidden rounded" title={MASTERY_STATES.map((m) => `${MASTERY_LABELS[m]}: ${t.mastery[m] ?? 0}`).join(" · ")}>
+                  <div
+                    className="flex h-2 w-full gap-[2px] overflow-hidden rounded"
+                    role="img"
+                    aria-label={`Mastery: ${MASTERY_STATES.map((m) => `${MASTERY_LABELS[m]} ${t.mastery[m] ?? 0}`).join(", ")}`}
+                    title={MASTERY_STATES.map((m) => `${MASTERY_LABELS[m]}: ${t.mastery[m] ?? 0}`).join(" · ")}
+                  >
                     {MASTERY_STATES.map((m) => (t.mastery[m] ? <div key={m} style={{ width: `${(t.mastery[m]! / t.problems) * 100}%`, background: RAMP[m] }} /> : null))}
                   </div>
                 </td>

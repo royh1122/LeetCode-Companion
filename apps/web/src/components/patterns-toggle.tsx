@@ -13,7 +13,8 @@ export function PatternsToggle({ shown }: { shown: boolean }) {
       size="sm"
       variant="ghost"
       disabled={pending}
-      aria-pressed={shown}
+      // An action button: its label says what a click does ("Hide"/"Show"), so no aria-pressed,
+      // which would announce the opposite state next to it.
       title={shown ? "Patterns are shown in lists. Hide them so they don't hint at the approach." : "Patterns are hidden so they don't hint at the approach. Show them."}
       onClick={() => start(async () => void (await updateSettingsAction({ showPatterns: !shown })))}
     >

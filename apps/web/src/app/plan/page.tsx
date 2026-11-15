@@ -38,7 +38,8 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
   const counts = queueCounts(d, plan.id);
   const upcoming = getUpcoming(d, 14);
   const skips = listSkipDates(d, plan);
-  const showPatterns = getAppSettings(d).showPatterns;
+  const appSettings = getAppSettings(d);
+  const showPatterns = appSettings.showPatterns;
   const practiced = practicedProblemIds(d);
   const shown = queue.filter((q) => (show === "all" ? true : show === "skipped" ? q.status === "skipped_practiced" || q.status === "removed" : q.status === "pending"));
   const pendingIdx = new Map(queue.filter((q) => q.status === "pending").map((q, i) => [q.problemId, i + 1]));
@@ -47,7 +48,8 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
     <div className="space-y-6">
       <PageHeader
         title="Study plan"
-        description={`${plan.name} · started ${formatLocalDate(plan.startDate)} · ${plan.timeZone}`}
+        // Days follow the time zone in Settings (the plan's stored one is not used for scheduling).
+        description={`${plan.name} · started ${formatLocalDate(plan.startDate)} · ${appSettings.timeZone}`}
         actions={
           <>
             {plan.status === "active" ? <SkipTodayButton planId={plan.id} today={today} skipped={skips.some((s) => s.date === today)} /> : null}

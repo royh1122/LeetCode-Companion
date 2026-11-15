@@ -5,6 +5,7 @@ import { MASTERY_LABELS, MASTERY_STATES } from "@lcc/shared";
 import { DifficultyBadge, MasteryBadge, OutcomeBadge } from "@/components/badges";
 import { ImportListForm } from "@/components/import-list-form";
 import { PracticeButton } from "@/components/practice";
+import { limitParam, ShowMore } from "@/components/show-more";
 import { Card, EmptyState, Input, PageHeader, Select, buttonVariants } from "@/components/ui";
 import { builtInListsFor } from "@/lib/lists";
 import { db } from "@/lib/server";
@@ -28,6 +29,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
     sort: (sp.sort as LibraryFilters["sort"]) || undefined,
   };
   const rows = searchLibrary(d, settings, filters);
+  const limit = limitParam(sp.limit, 400);
   const lists = listStudyLists(d);
   const { patterns, topics } = allPatternsAndTopics(d);
   const today = todayFor(d);
@@ -136,7 +138,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.slice(0, 400).map(({ problem: p, stats: s }) => (
+              {rows.slice(0, limit).map(({ problem: p, stats: s }) => (
                 <tr key={p.id} className="hover:bg-surface-2">
                   <td className="tabular px-4 py-2 font-mono text-xs text-subtle">{p.frontendId}</td>
                   <td className="max-w-72 px-2 py-2">
@@ -168,6 +170,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
         ) : (
           <EmptyState title="No questions match these filters" />
         )}
+        {rows.length > limit ? <ShowMore shown={limit} total={rows.length} step={400} params={sp} path="/library" /> : null}
       </Card>
     </div>
   );

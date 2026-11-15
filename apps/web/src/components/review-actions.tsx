@@ -2,9 +2,10 @@
 
 import { Clock } from "lucide-react";
 import { useState, useTransition } from "react";
-import { addDays } from "@lcc/shared";
+import { addDays, formatLocalDate } from "@lcc/shared";
 import { postponeReviewAction, pullEarlyReviewsAction, pullMoreReviewsAction } from "@/lib/actions";
 import { Button } from "./ui";
+import { offerUndo } from "./undo-toast";
 
 export function PostponeButtons({ problemId, today }: { problemId: number; today: string }) {
   const [pending, start] = useTransition();
@@ -22,7 +23,8 @@ export function PostponeButtons({ problemId, today }: { problemId: number; today
           onClick={() =>
             start(async () => {
               const r = await postponeReviewAction(problemId, addDays(today, n));
-              if (!r.ok) setErr(r.error);
+              if (!r.ok) return setErr(r.error);
+              offerUndo(r.data.undo, `Review postponed to ${formatLocalDate(addDays(today, n))}.`);
             })
           }
         >

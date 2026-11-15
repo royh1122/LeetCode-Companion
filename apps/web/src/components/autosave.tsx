@@ -27,6 +27,7 @@ export function AutosaveTextarea({
   rows = 3,
   className,
   label,
+  ariaLabel,
   id,
   maxLength,
 }: {
@@ -36,6 +37,8 @@ export function AutosaveTextarea({
   rows?: number;
   className?: string;
   label?: string;
+  /** Accessible name when there is no visible label (e.g. the box sits under a card heading). */
+  ariaLabel?: string;
   id?: string;
   /** The server's limit for this field, so over-long text can't be typed and then fail to save. */
   maxLength: number;
@@ -135,6 +138,7 @@ export function AutosaveTextarea({
       ) : null}
       <Textarea
         id={id}
+        aria-label={label ? undefined : ariaLabel}
         rows={rows}
         maxLength={maxLength}
         // One-line fields (e.g. complexity) stay one line tall and read as code.
@@ -180,11 +184,12 @@ export function SaveStatus({ status }: { status: Status }) {
   return <span className={cn("text-[11px]", status === "error" || status === "conflict" ? "text-bad" : "text-subtle")} aria-live="polite">{text}</span>;
 }
 
-export function SessionNoteField(props: { sessionId: string; field: "notes" | "struggles" | "takeaway" | "mistakes" | "timeComplexity" | "spaceComplexity"; initial: string; label?: string; placeholder?: string; rows?: number }) {
+export function SessionNoteField(props: { sessionId: string; field: "notes" | "struggles" | "takeaway" | "mistakes" | "timeComplexity" | "spaceComplexity"; initial: string; label?: string; ariaLabel?: string; placeholder?: string; rows?: number }) {
   return (
     <AutosaveTextarea
       id={`s-${props.field}`}
       label={props.label}
+      ariaLabel={props.ariaLabel}
       initial={props.initial}
       rows={props.rows}
       placeholder={props.placeholder}

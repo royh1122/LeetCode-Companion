@@ -1,9 +1,8 @@
-import fs from "node:fs";
 import path from "node:path";
 import Link from "next/link";
-import { backupDir, defaultDbPath, getAppSettings, getExtensionLastSeen, getExtensionToken, listUnattributed, recentSyncEvents } from "@lcc/db";
+import { backupDir, defaultDbPath, getAppSettings, getExtensionLastSeen, getExtensionToken, listBackups, listUnattributed, recentSyncEvents } from "@lcc/db";
 import { VerdictBadge } from "@/components/badges";
-import { DataControls, GeneralSettingsForm, TokenBox } from "@/components/settings-forms";
+import { DataControls, GeneralSettingsForm, PruneBackupsButton, TokenBox } from "@/components/settings-forms";
 import { timeZoneGroups } from "@/lib/timezones";
 import { Badge, Card, CardHeader, PageHeader } from "@/components/ui";
 import { db } from "@/lib/server";
@@ -19,17 +18,11 @@ export default function SettingsPage() {
   const seen = getExtensionLastSeen(d);
   const events = recentSyncEvents(d, 25);
   const unattributed = listUnattributed(d);
-  let backups: string[] = [];
-  try {
-    backups = fs
-      .readdirSync(backupDir())
-      .filter((f) => f.endsWith(".db"))
-      .sort()
-      .reverse()
-      .slice(0, 8);
-  } catch {
-    backups = [];
-  }
+  const allBackups = listBackups();
+  const backups = allBackups.slice(0, 8).map((b) => b.name);
+  const automatic = allBackups.filter((b) => b.automatic).length;
+  const backupMb = Math.round(allBackups.reduce((a, b) => a + b.bytes, 0) / 1_048_576);
+  const backupsLarge = automatic > 50 || backupMb > 500;
 
   return (
     <div className="space-y-6">
@@ -68,7 +61,14 @@ export default function SettingsPage() {
               Database: <code className="font-mono">{defaultDbPath()}</code>
             </div>
             <div>
-              Backups: <code className="font-mono">{backupDir()}</code> (also taken automatically before migrations and imports)
+              Backups: <code className="font-mono">{backupDir()}</code> (also taken automatically before migrations, imports, restores, and deleting a session or submission)
+            </div>
+            <div className={`mt-1 flex flex-wrap items-center gap-2 ${backupsLarge ? "text-warn" : ""}`}>
+              <span>
+                {allBackups.length} backup{allBackups.length === 1 ? "" : "s"} ({automatic} automatic), {backupMb} MB.
+                {backupsLarge ? " The folder is getting large." : ""}
+              </span>
+              <PruneBackupsButton automatic={automatic} />
             </div>
             {backups.length ? (
               <ul className="mt-1 list-disc pl-5">

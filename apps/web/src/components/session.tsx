@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { OUTCOMES, OUTCOME_LABELS, VERDICTS, addDays, effectiveDuration, elapsedMs, formatClock, formatDuration, type Outcome } from "@lcc/shared";
 import { abandonSession, deleteSubmissionAction, finishSessionAction, linkSubmissionAction, logSubmissionManually, pauseSession, resumeSession, revealInSession } from "@/lib/actions";
+import { onRadioGroupKeyDown, radioTabIndex } from "@/lib/radio";
 import { cn, formatDateTime } from "@/lib/utils";
 import { VerdictBadge } from "./badges";
 import { CodeBlock } from "./code";
@@ -219,7 +220,8 @@ export function ReflectionForm({
         endAtLastActivity && timing.lastActivityAt ? timing.lastActivityAt : null,
       );
       if (!r.ok) return setError(r.error);
-      router.push("/");
+      // Today then says what was scheduled.
+      router.push(`/?finished=${encodeURIComponent(sessionId)}`);
     });
 
   const quick = [
@@ -233,13 +235,14 @@ export function ReflectionForm({
     <div className="space-y-4">
       <fieldset>
         <legend className="mb-2 text-xs font-medium text-muted">How did it go?</legend>
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="radiogroup">
-          {OUTCOMES.map((o) => (
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="radiogroup" aria-label="How did it go?" onKeyDown={onRadioGroupKeyDown}>
+          {OUTCOMES.map((o, i) => (
             <button
               type="button"
               key={o}
               role="radio"
               aria-checked={outcome === o}
+              tabIndex={radioTabIndex(i, outcome ? OUTCOMES.indexOf(outcome) : -1)}
               onClick={() => {
                 setOutcome(o);
                 setReviewDate(null);

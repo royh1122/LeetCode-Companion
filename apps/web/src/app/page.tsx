@@ -1,8 +1,8 @@
-import { AlertTriangle, CalendarOff, Coffee, Inbox, PauseCircle, PlayCircle } from "lucide-react";
+import { AlertTriangle, CalendarOff, CheckCircle2, Coffee, Inbox, PauseCircle, PlayCircle } from "lucide-react";
 import Link from "next/link";
-import { getAppSettings, getProblemById, getTodayView, listStudyLists, type TodayItem } from "@lcc/db";
+import { getAppSettings, getProblemById, getSession, getTodayView, listStudyLists, type TodayItem } from "@lcc/db";
 import { builtInListsFor } from "@/lib/lists";
-import { formatLocalDate } from "@lcc/shared";
+import { OUTCOME_LABELS, diffDays, formatLocalDate, type Outcome } from "@lcc/shared";
 import { CreatePlanForm } from "@/components/create-plan-form";
 import { ImportListForm } from "@/components/import-list-form";
 import { PatternsToggle } from "@/components/patterns-toggle";
@@ -44,7 +44,47 @@ function Section({ title, description, items, today, showPatterns, empty, accent
   );
 }
 
-export default function TodayPage() {
+/** After finishing a session: what happened and when the question comes back. */
+function FinishedNotice({ sessionId, today }: { sessionId: string; today: string }) {
+  const d = db();
+  const s = getSession(d, sessionId);
+  if (s?.status !== "completed") return null;
+  const p = getProblemById(d, s.problemId);
+  const outcome = s.outcome ? (OUTCOME_LABELS[s.outcome as Outcome]?.label ?? s.outcome) : null;
+  const inDays = s.nextReviewDate ? diffDays(today, s.nextReviewDate) : null;
+  return (
+    <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm">
+      <span className="flex items-center gap-2">
+        <CheckCircle2 className="size-4 text-good" aria-hidden />
+        <span>
+          Finished <span className="font-medium">{p?.title ?? "the question"}</span>
+          {outcome ? <> · {outcome}</> : null}
+          {s.nextReviewDate ? (
+            <>
+              {" "}
+              · next review {formatLocalDate(s.nextReviewDate)}
+              {inDays != null && inDays > 0 ? ` (in ${inDays} day${inDays === 1 ? "" : "s"})` : ""}
+              {s.nextReviewOverridden ? ", your choice" : ""}
+            </>
+          ) : (
+            " · no review scheduled"
+          )}
+        </span>
+      </span>
+      <span className="flex items-center gap-3 text-xs">
+        <Link href={`/sessions/${s.id}`} className="text-accent hover:underline">
+          Session
+        </Link>
+        <Link href="/" className="text-muted hover:text-fg" aria-label="Dismiss">
+          Dismiss
+        </Link>
+      </span>
+    </div>
+  );
+}
+
+export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+  const sp = await searchParams;
   const d = db();
   const v = getTodayView(d);
   const lists = listStudyLists(d);
@@ -85,6 +125,7 @@ export default function TodayPage() {
 
   return (
     <div className="space-y-6">
+      {sp.finished ? <FinishedNotice sessionId={sp.finished} today={v.today} /> : null}
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-subtle">{formatLocalDate(v.today, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>

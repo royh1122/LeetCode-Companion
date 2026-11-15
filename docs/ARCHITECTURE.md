@@ -1,7 +1,7 @@
 # Architecture
 
 ```text
-leetcode-prep/
+LeetCode-Companion/
 ├── apps/
 │   ├── web/          Next.js 16 dashboard (App Router, server components + server actions, Tailwind v4)
 │   └── extension/    Chrome MV3 extension (esbuild): service worker, content scripts, side panel, options

@@ -23,6 +23,7 @@ export function QuestionRow({ item, today, showPatterns }: { item: TodayItem; to
             <Link href={`/problems/${p.slug}`} className={cn("font-medium break-words hover:underline", done && "line-through decoration-subtle")}>
               {p.title}
             </Link>
+            {done ? <span className="sr-only">(done)</span> : null}
             <DifficultyBadge d={p.difficulty} />
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">

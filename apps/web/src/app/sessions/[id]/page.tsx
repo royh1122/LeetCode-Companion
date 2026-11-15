@@ -99,7 +99,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
               <Card>
                 <CardHeader title="Session notes" description="Autosaved. Specific to this attempt — your permanent notes live on the question page." />
                 <div className="p-4">
-                  <SessionNoteField sessionId={s.id} field="notes" initial={s.notes ?? ""} rows={4} placeholder="What's your approach? What tripped you up?" />
+                  <SessionNoteField sessionId={s.id} field="notes" ariaLabel="Session notes" initial={s.notes ?? ""} rows={4} placeholder="What's your approach? What tripped you up?" />
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <SessionNoteField sessionId={s.id} field="timeComplexity" label="Time complexity" initial={s.timeComplexity ?? ""} rows={1} placeholder="O(n)" />
                     <SessionNoteField sessionId={s.id} field="spaceComplexity" label="Space complexity" initial={s.spaceComplexity ?? ""} rows={1} placeholder="O(1)" />
@@ -261,6 +261,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
               <EditSessionForm
                 id={s.id}
                 notes={s.notes ?? ""}
+                struggles={s.struggles ?? ""}
                 mistakes={s.mistakes ?? ""}
                 takeaway={s.takeaway ?? ""}
                 timeComplexity={s.timeComplexity ?? ""}

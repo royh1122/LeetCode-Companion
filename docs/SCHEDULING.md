@@ -1,6 +1,6 @@
 # Scheduling policy
 
-The scheduler is a set of pure functions in `packages/scheduler`: `planDay`, `computeNextReview`, `computeMastery` and `forecast`. The database layer (`packages/db/src/schedule.ts`) feeds them data and applies the result in one transaction. All behavior below is covered by tests in `packages/scheduler/test` and `packages/db/test`.
+The scheduler is a set of pure functions in `packages/scheduler`: `planDay`, `computeNextReview`, `computeMastery` and `forecast`. The database layer (`packages/db/src/schedule.ts`) feeds them data and applies the result in one transaction. The rules below are exercised by tests in `packages/scheduler/test` and `packages/db/test`, though not every combination of settings is.
 
 ## Concepts
 
@@ -67,7 +67,7 @@ These are defaults, and all are editable in Settings.
 
 | Outcome | First interval | After a streak |
 |---|---|---|
-| Failed / needed hints | 1 day | resets to 1 day; streak → 0; counts a *lapse* only if it had been solved independently before |
+| Failed / needed hints | 1 day | resets to 1 day; streak → 0; counts a *lapse* only if the problem was in the review stage or on a success streak (not while still learning) |
 | Struggled | 3 days | shrinks a long interval to ×0.5, but never below 3 days or above the previous interval |
 | Independent | 7 days | previous × 2 (7 → 14 → 28 …) |
 | Easy | 21 days | previous × 2.5 |
