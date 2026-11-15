@@ -11,6 +11,7 @@ const dir = path.resolve(process.env.LCC_DATA_DIR ?? "data/demo");
 if (path.basename(dir) !== "demo") throw new Error("Refusing to write demo data outside a *demo* directory");
 fs.rmSync(dir, { recursive: true, force: true });
 process.env.LCC_DATA_DIR = dir;
+delete process.env.LCC_DB_PATH; // would otherwise name the database file outside the demo folder
 
 async function main() {
   const db = await import("@lcc/db");

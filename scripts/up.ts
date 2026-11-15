@@ -19,6 +19,9 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "..");
 const BACKGROUND = process.argv.includes("--background");
 const DATA_DIR = process.env.LCC_DATA_DIR ? path.resolve(process.env.LCC_DATA_DIR) : path.join(ROOT, "data");
+// Children run in other folders (the server in apps/web): pass the absolute path so a relative
+// LCC_DATA_DIR means the same folder for all of them.
+if (process.env.LCC_DATA_DIR) process.env.LCC_DATA_DIR = DATA_DIR;
 // LCC_PORT / LCC_NO_BROWSER exist for testing; normal use is port 4317 (the extension expects it).
 const PORT = Number(process.env.LCC_PORT) || 4317;
 const URL_ = `http://127.0.0.1:${PORT}/`;
@@ -27,12 +30,59 @@ function log(msg: string) {
   console.log(`[up] ${msg}`);
 }
 
-async function isServing(): Promise<boolean> {
+/** "ours" only if the dashboard's own revision endpoint answers; any other answer is another program. */
+async function probe(): Promise<"ours" | "other" | "none"> {
   try {
-    const res = await fetch(URL_, { signal: AbortSignal.timeout(1500), redirect: "manual" });
-    return res.status > 0;
+    const res = await fetch(new URL("api/revision", URL_), { signal: AbortSignal.timeout(1500), redirect: "manual" });
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    return typeof body?.revision === "number" ? "ours" : "other";
   } catch {
-    return false;
+    return "none";
+  }
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+// Two quick starts (a double-click) would both build and start; the second then fails with a
+// "could not start" popup although the dashboard is up. The lock lets only one of them work.
+const LOCK = path.join(DATA_DIR, "up.lock");
+const LOCK_STALE_MS = 10 * 60_000; // a crashed launcher's pid may be reused; don't trust old locks
+
+function takeLock(): boolean {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.writeFileSync(LOCK, String(process.pid), { flag: "wx" });
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      let pid = 0;
+      let age = Infinity;
+      try {
+        pid = Number(fs.readFileSync(LOCK, "utf8"));
+        age = Date.now() - fs.statSync(LOCK).mtimeMs;
+      } catch {
+        /* removed meanwhile */
+      }
+      if (pid && alive(pid) && age < LOCK_STALE_MS) return false;
+      fs.rmSync(LOCK, { force: true });
+    }
+  }
+  return false;
+}
+
+function releaseLock() {
+  try {
+    if (fs.readFileSync(LOCK, "utf8") === String(process.pid)) fs.rmSync(LOCK, { force: true });
+  } catch {
+    /* not ours or already gone */
   }
 }
 
@@ -110,12 +160,32 @@ function openBrowser() {
 }
 
 async function main() {
-  if (await isServing()) {
+  const state = await probe();
+  if (state === "other") throw new Error(`Port ${PORT} is used by another program, not the dashboard. Close it, then start again.`);
+  if (state === "ours") {
     if (newestMtime(WEB_INPUTS) > mtime(BUILD_STAMP)) notify("LeetCode Companion is running an older version. Stop it, then start it again to update.");
     else log(`Already running — opening ${URL_}`);
     openBrowser();
     return;
   }
+  if (!takeLock()) {
+    // The other launch builds, starts and opens the browser; just wait for it.
+    log("Another start is already in progress; waiting for it.");
+    const deadline = Date.now() + 180_000;
+    while (Date.now() < deadline) {
+      if ((await probe()) === "ours") return log(`Started by the other launch → ${URL_}`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error("The other start did not finish within 3 minutes.");
+  }
+  try {
+    await start();
+  } finally {
+    releaseLock();
+  }
+}
+
+async function start() {
 
   const builtAt = mtime(BUILD_STAMP);
   if (!builtAt || newestMtime(WEB_INPUTS) > builtAt) {
@@ -177,7 +247,7 @@ async function main() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline && !failed) {
     await new Promise((r) => setTimeout(r, 500));
-    if (await isServing()) {
+    if ((await probe()) === "ours") {
       ready = true;
       openBrowser();
       if (BACKGROUND) {

@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { defaultDbPath, getExtensionToken, openDb } from "@lcc/db";
+import { requireIsolatedDataDir } from "./isolation";
 import { E2E_BASE } from "./port";
 import { OTHER_GRAPHQL_REQUEST, STUDY_PLAN_NEXT_DATA, STUDY_PLAN_REQUEST, STUDY_PLAN_RESPONSE } from "../../apps/extension/test/fixtures";
 
@@ -135,6 +136,7 @@ async function waitFor<T>(fn: () => T | Promise<T>, ok: (v: T) => boolean, label
 }
 
 async function main() {
+  requireIsolatedDataDir("extension-flow.ts");
   if (!fs.existsSync(path.join(EXT, "manifest.json"))) throw new Error("Build the extension first: npm run ext:build");
   const token = getExtensionToken(openDb());
   const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-e2e-"));

@@ -36,8 +36,14 @@ export function dataDir(): string {
   return dir;
 }
 
+/**
+ * LCC_DB_PATH picks the file only when LCC_DATA_DIR is not set: a data directory (the demo,
+ * the e2e runner's temp folder) always wins, so a leftover LCC_DB_PATH can't point an
+ * isolated run at the real database.
+ */
 export function defaultDbPath(): string {
-  return process.env.LCC_DB_PATH ? path.resolve(process.env.LCC_DB_PATH) : path.join(dataDir(), "leetcode-companion.db");
+  if (process.env.LCC_DB_PATH && !process.env.LCC_DATA_DIR) return path.resolve(process.env.LCC_DB_PATH);
+  return path.join(dataDir(), "leetcode-companion.db");
 }
 
 export function migrationsFolder(): string {
@@ -53,10 +59,27 @@ function pendingMigrationCount(sqlite: Database.Database, folder: string): numbe
   return journal.entries.length - applied;
 }
 
+/** Next to the database file, so backups follow LCC_DB_PATH too. */
 export function backupDir(): string {
-  const dir = path.join(dataDir(), "backups");
+  const dir = path.join(path.dirname(defaultDbPath()), "backups");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Why `file` can't be restored (not SQLite, damaged, or not this app's database), or null if it's fine. */
+export function checkDatabaseFile(file: string): string | null {
+  let check: Database.Database | undefined;
+  try {
+    check = new Database(file, { readonly: true, fileMustExist: true });
+    const integrity = check.pragma("integrity_check", { simple: true });
+    if (integrity !== "ok") return `The file is damaged (integrity check: ${String(integrity)}).`;
+    const ok = check.prepare("select name from sqlite_master where type='table' and name='sessions'").get();
+    return ok ? null : "That file does not look like a LeetCode Companion database.";
+  } catch (e) {
+    return `That file can't be opened as a database (${e instanceof Error ? e.message : String(e)}).`;
+  } finally {
+    check?.close();
+  }
 }
 
 /** A new backup file name; a second backup in the same second gets a numbered suffix. */

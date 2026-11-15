@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { addDays, DEFAULT_SRS_SETTINGS, toLocalDate, weekdayOf, type Outcome } from "@lcc/shared";
@@ -62,6 +63,9 @@ import {
   setMeta,
   openDb,
   backupDatabaseSync,
+  backupDir,
+  checkDatabaseFile,
+  defaultDbPath,
   type Db,
 } from "../src";
 import { at, freshDb, TZ } from "./helpers";
@@ -1028,6 +1032,46 @@ describe("settings and backups", () => {
     const good = getAppSettings(db);
     setMeta(db, "settings", JSON.stringify({ ...good, idleThresholdSec: 5, srs: { ...good.srs, maxIntervalDays: 90, baseIntervals: { ...good.srs.baseIntervals, easy: "x" } } }));
     expect(getAppSettings(db)).toMatchObject({ timeZone: TZ, idleThresholdSec: 300, srs: { maxIntervalDays: 90, baseIntervals: { easy: 21, independent: 7 } } });
+  });
+
+  it("a data directory beats LCC_DB_PATH; backups sit next to the database file", () => {
+    const saved = { dir: process.env.LCC_DATA_DIR, file: process.env.LCC_DB_PATH };
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-paths-"));
+    try {
+      process.env.LCC_DB_PATH = path.join(tmp, "elsewhere", "real.db");
+      process.env.LCC_DATA_DIR = path.join(tmp, "demo");
+      expect(defaultDbPath()).toBe(path.join(tmp, "demo", "leetcode-companion.db"));
+      expect(backupDir()).toBe(path.join(tmp, "demo", "backups"));
+      delete process.env.LCC_DATA_DIR;
+      expect(defaultDbPath()).toBe(path.join(tmp, "elsewhere", "real.db"));
+      expect(backupDir()).toBe(path.join(tmp, "elsewhere", "backups"));
+    } finally {
+      for (const [k, v] of [["LCC_DATA_DIR", saved.dir], ["LCC_DB_PATH", saved.file]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("restore refuses files that aren't an intact app database", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-check-"));
+    try {
+      const junk = path.join(tmp, "junk.db");
+      fs.writeFileSync(junk, "not a database at all, just some text that is long enough");
+      expect(checkDatabaseFile(junk)).toMatch(/can't be opened|damaged/);
+      const other = path.join(tmp, "other.db");
+      const o = new Database(other);
+      o.exec("create table t (x)");
+      o.close();
+      expect(checkDatabaseFile(other)).toMatch(/does not look like/);
+      const good = path.join(tmp, "good.db");
+      freshDb().$client.prepare("VACUUM INTO ?").run(good);
+      expect(checkDatabaseFile(good)).toBeNull();
+      expect(checkDatabaseFile(path.join(tmp, "missing.db"))).toMatch(/can't be opened/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("two backups in the same second both succeed", () => {

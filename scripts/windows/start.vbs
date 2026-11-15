@@ -6,9 +6,11 @@ Dim sh, fso, root, dataDir, code
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 root = fso.GetParentFolderName(fso.GetParentFolderName(fso.GetParentFolderName(WScript.ScriptFullName)))
-dataDir = root & "\data"
-If Not fso.FolderExists(dataDir) Then fso.CreateFolder dataDir
 sh.CurrentDirectory = root
+' Same folder as the server uses: LCC_DATA_DIR if set (relative to the project), else data.
+dataDir = sh.ExpandEnvironmentStrings("%LCC_DATA_DIR%")
+If dataDir = "%LCC_DATA_DIR%" Or dataDir = "" Then dataDir = root & "\data" Else dataDir = fso.GetAbsolutePathName(dataDir)
+If Not fso.FolderExists(dataDir) Then fso.CreateFolder dataDir
 code = sh.Run("cmd /c npm run up -- --background > """ & dataDir & "\launcher.log"" 2>&1", 0, True)
 If code <> 0 Then
   MsgBox "LeetCode Companion could not start." & vbCrLf & vbCrLf & _

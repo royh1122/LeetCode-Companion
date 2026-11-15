@@ -142,7 +142,7 @@ After changing extension code, run `npm run ext:build` again and click reload on
 
 ## Your data, backups and restore
 
-- Everything lives in `data/leetcode-companion.db` (SQLite, WAL mode). Override the location with `LCC_DATA_DIR` or `LCC_DB_PATH`.
+- Everything lives in `data/leetcode-companion.db` (SQLite, WAL mode). Override the location with `LCC_DATA_DIR` (a folder) or `LCC_DB_PATH` (the file; ignored when `LCC_DATA_DIR` is set). Backups go to a `backups` folder next to the database file.
 - **Backups.** Use **Settings → Back up database now** or `npm run db:backup`. A backup is also taken automatically before every schema migration and every JSON import.
 - **Restore.** Stop the dashboard, run `npm run db:restore` with no argument to list backups, then run `npm run db:restore -- data/backups/<file>.db`.
 - **JSON export/import.** Use **Settings → Export JSON** (or `npm run db:export`). Problems are referenced by slug, so an export works in any installation. Import *merges* and never overwrites:

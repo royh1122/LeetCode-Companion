@@ -36,7 +36,10 @@ function writeIcon() {
     dir.writeUInt32LE(offset, o + 12);
     offset += p.data.length;
   });
-  fs.writeFileSync(ICON, Buffer.concat([header, dir, ...pngs.map((p) => p.data)]));
+  const ico = Buffer.concat([header, dir, ...pngs.map((p) => p.data)]);
+  // The .ico is tracked in git: rewrite it only when the icons changed, so it doesn't show as modified.
+  if (fs.existsSync(ICON) && fs.readFileSync(ICON).equals(ico)) return;
+  fs.writeFileSync(ICON, ico);
 }
 
 function ps(script: string): string {

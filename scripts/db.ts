@@ -4,8 +4,11 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
-import { backupDatabase, backupDir, dataDir, defaultDbPath, exportAll, importAll, importStudyLists, openDb, sampleLists } from "@lcc/db";
+import { backupDatabase, backupDir, checkDatabaseFile, dataDir, defaultDbPath, exportAll, importAll, importStudyLists, openDb, sampleLists } from "@lcc/db";
+
+/** The ports a dashboard on this database could be using: the usual one, and LCC_PORT if set. */
+const dashboardPorts = () => [...new Set([4317, Number(process.env.LCC_PORT) || 4317])];
+const answers = (port: number) => fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) }).then(() => true, () => false);
 
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
@@ -38,15 +41,15 @@ async function main() {
       }
       const src = path.resolve(arg);
       if (!fs.existsSync(src)) throw new Error(`No such file: ${src}`);
-      // Validate the backup opens and looks like ours.
-      const check = new Database(src, { readonly: true });
-      const ok = check.prepare("select name from sqlite_master where type='table' and name='sessions'").get();
-      check.close();
-      if (!ok) throw new Error("That file does not look like a LeetCode Companion database.");
+      // Validate the backup opens, is intact and looks like ours.
+      const problem = checkDatabaseFile(src);
+      if (problem) throw new Error(problem);
       const target = defaultDbPath();
       if (src === path.resolve(target)) throw new Error("That is the live database, not a backup. Pick a file from data/backups.");
       // Replacing the file under a running server loses the restore (or fails half-way on Windows).
-      if (await fetch("http://127.0.0.1:4317/", { signal: AbortSignal.timeout(1500) }).then(() => true, () => false)) throw new Error("The dashboard is running. Stop it first (npm run down), then restore.");
+      for (const port of dashboardPorts()) {
+        if (await answers(port)) throw new Error(`A dashboard is running on port ${port}. Stop it first (npm run down), then restore.`);
+      }
       if (fs.existsSync(target)) {
         const cur = openDb(target, { migrate: false });
         const safety = await backupDatabase(cur.$client, "before-restore");
