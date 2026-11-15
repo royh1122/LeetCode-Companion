@@ -21,11 +21,11 @@ The extension **observes your normal browser activity; it never makes requests t
 
 1. A MAIN-world content script wraps `window.fetch` and `XMLHttpRequest`.
    - It passes every request through unchanged.
-   - It inspects only submit, run and check requests, plus GraphQL requests whose body asks for `studyPlanV2Detail`, reading the request body and a *clone* of the response.
+   - It inspects only submit, run and check requests, plus GraphQL requests whose body asks for `studyPlanV2Detail`, reading the request body and a *clone* of the response. The clone is taken as soon as the response arrives, before the page can read the body.
    - All other traffic, including every other GraphQL call, is ignored. Errors inside the hook are swallowed so the page can't break.
 2. Captured data is posted to the isolated content script with `window.postMessage`. The message is checked for the same window, the same origin and its shape, then forwarded to the service worker.
 3. The service worker attributes it to the session bound to that tab (same problem only), queues sync events, and sends them to the local dashboard. A submit or run is only accepted for the problem open in that tab, and a verdict only for a submit or run it saw.
-4. Problem detection uses only the URL (`/problems/{slug}/…`), polled every second for SPA navigation, plus `document.title` for the number and title. On `/studyplan/<slug>/` pages only, the isolated script also reads the plan data LeetCode embeds in `<script id="__NEXT_DATA__">`, and uses it only if it describes the plan in the address bar.
+4. Problem detection uses only the URL (`/problems/{slug}/…`), polled every second for SPA navigation, plus `document.title` for the number and title. After in-app navigation LeetCode updates the title a moment after the URL, so the title is held back until it changes, rather than reporting the previous problem's. A report the service worker didn't take is retried every second. On `/studyplan/<slug>/` pages only, the isolated script also reads the plan data LeetCode embeds in `<script id="__NEXT_DATA__">`, and uses it only if it describes the plan in the address bar.
 
 ### Why this is low-risk
 
@@ -47,7 +47,7 @@ The extension **observes your normal browser activity; it never makes requests t
 |---|---|
 | Problem detection from the URL, including SPA navigation | Reliable |
 | Tab ↔ session binding, refresh, multiple tabs, browser restart | Reliable (tested) |
-| Active-time estimate | **Estimate.** Counts 15-second heartbeat intervals that began with the tab visible and focused and with input within the idle threshold (default 5 min, configurable). Long gaps (sleep, browser closed) are never counted. Reading without touching mouse or keyboard for longer than the threshold is *not* counted. Shown with "≈". |
+| Active-time estimate | **Estimate.** Counts 15-second heartbeat intervals that began with the tab visible and focused and with input within the idle threshold (default 5 min, configurable). Long gaps (sleep, browser closed) are never counted. Reading without touching mouse or keyboard for longer than the threshold is *not* counted. Typing in the side panel counts too (the page is unfocused then): for a minute after each keystroke there, the visible tab counts as focused. Shown with "≈". |
 | Submit capture (code, language, verdict, runtime, memory, test counts) | **Best-effort.** Depends on LeetCode's internal endpoints. |
 | Run capture | Best-effort. Stored with `kind = run` and never counted as a submission. |
 | Time to first Accepted | Only when an Accepted submit was captured or logged |
@@ -64,6 +64,7 @@ The extension **observes your normal browser activity; it never makes requests t
   - Every event has a client-generated UUID and is processed at most once (the `sync_events` table).
   - Retries return `duplicate`. Permanent failures return `rejected`, are stored with the error, and appear in the panel and in Settings → Sync log.
   - A notes event that arrives after its session ended (for example, the session was finished in the dashboard first) only fills fields that are still empty; it never replaces the final text.
+  - A notes event for an open session carries the text it was based on. If the dashboard's text has changed since, both are kept: the dashboard's stays, and the extension's is added below the notes under "Typed in the extension at the same time".
 - **Sessions:** at most one *open* session per problem (partial unique index).
   - Starting again, a refresh, or a second tab resumes the open session instead of creating a new one.
   - If the extension created a session offline while another was opened on the dashboard, the server keeps the existing one and aliases the extension's id to it.

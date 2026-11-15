@@ -152,8 +152,9 @@ export function parseCheckResponse(body: unknown): JudgeResult | null {
     memoryPercentile: num(b.memory_percentile),
     lang: typeof b.lang === "string" ? b.lang : null,
     questionId: b.question_id != null ? String(b.question_id) : null,
-    // task_finish_time is epoch ms on current LeetCode; tolerate seconds.
-    finishedAt: finish == null ? null : finish < 1e12 ? finish * 1000 : finish,
+    // task_finish_time is epoch ms on current LeetCode; tolerate seconds. Whole ms: the sync
+    // protocol takes integer timestamps, and a fraction would get the verdict rejected.
+    finishedAt: finish == null || finish <= 0 ? null : Math.round(finish < 1e12 ? finish * 1000 : finish),
     details: {
       lastTestcase: clip(b.last_testcase),
       expectedOutput: clip(b.expected_output),

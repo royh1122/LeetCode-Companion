@@ -19,6 +19,9 @@ let activeTabId: number | null = null;
 let outcome: Outcome | null = null;
 let notesTimer: ReturnType<typeof setTimeout> | null = null;
 let renderedSessionId: string | null = null;
+/** The last "both versions kept" notice shown, so it shows once. */
+let shownConflictAt: number | null = null;
+let panelInputSentAt = 0;
 /** Text fields the panel edits, by session field → input element id. */
 const TEXT_FIELDS = { notes: "s-notes", timeComplexity: "s-tc", spaceComplexity: "s-sc" } as const;
 type TextField = keyof typeof TEXT_FIELDS;
@@ -42,7 +45,9 @@ const pinnedTab = Number(new URLSearchParams(location.search).get("tab")) || nul
 
 async function currentTab() {
   if (pinnedTab != null) return chrome.tabs.get(pinnedTab).catch(() => null);
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // The panel's own window, not whichever window was focused last: with two windows, the panel
+  // must never show (or finish) the other window's session.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab ?? null;
 }
 
@@ -92,6 +97,11 @@ function renderSync() {
     text = "Not connected yet";
   }
   el.append(h("span", { className: "dot", style: `background:${color}` }), text);
+  const qw = state.queueWarning;
+  if (qw) {
+    const parts = [qw.codeDropped ? `code of ${qw.codeDropped} submission(s) not kept` : "", qw.dropped ? `${qw.dropped} change(s) lost` : ""].filter(Boolean);
+    el.append(h("span", { className: "chip bad", title: "The extension's storage for unsent changes is full. Start the dashboard so they can sync." }, `Storage full: ${parts.join(", ")}`));
+  }
   if (failed.length) el.append(h("span", { className: "chip bad", title: failed.map((f) => `${f.event.type}: ${f.error}`).join("\n") }, retryable ? `${retryable} not sent` : `${failed.length} rejected`));
   // Set-aside changes still hold their data (code, notes): they can be sent again once the dashboard is fixed.
   if (retryable) el.append(h("button", { title: "Send the changes the dashboard could not take again", onclick: async () => (await send({ type: "sync:retry" }), refresh()) }, "Retry"));
@@ -175,10 +185,15 @@ function render(url: string) {
       : [h("li", { className: "muted small" }, "None yet — Submit on LeetCode and it appears here.")]),
   );
   if (fresh) dirty.clear();
+  // The dashboard had newer text than an edit sent from here and kept both: show what it stored,
+  // even in the field being typed in (only fields with nothing unsent are replaced).
+  const conflict = !fresh && s.conflictAt != null && s.conflictAt !== shownConflictAt;
+  if (fresh || conflict) shownConflictAt = s.conflictAt ?? null;
   for (const f of Object.keys(TEXT_FIELDS) as TextField[]) {
     const el = fieldEl(f);
-    if (fresh || (!dirty.has(f) && document.activeElement !== el)) el.value = s[f] ?? "";
+    if (fresh || (!dirty.has(f) && (document.activeElement !== el || conflict))) el.value = s[f] ?? "";
   }
+  if (conflict) $("s-notes-status").textContent = "· also changed in the dashboard meanwhile: both versions kept";
   if (fresh) {
     outcome = null;
     ($<HTMLInputElement>("s-hints")).checked = false;
@@ -274,6 +289,11 @@ async function saveNotesNow() {
 for (const f of Object.keys(TEXT_FIELDS) as TextField[]) {
   fieldEl(f).addEventListener("input", () => {
     if (!state?.session) return;
+    // Time spent typing here counts as active (the LeetCode page sees no input meanwhile).
+    if (activeTabId != null && Date.now() - panelInputSentAt > 10_000) {
+      panelInputSentAt = Date.now();
+      void send({ type: "panel:input", tabId: activeTabId }).catch(() => undefined);
+    }
     $("s-notes-status").textContent = "· unsaved";
     dirty.add(f);
     if (notesTimer) clearTimeout(notesTimer);

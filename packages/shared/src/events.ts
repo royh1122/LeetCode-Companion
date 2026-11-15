@@ -51,15 +51,27 @@ export const sessionResumeEvent = z.object({
   payload: z.object({ sessionId: uuid, at: ts }),
 });
 
+const sessionTextFields = {
+  notes: z.string().max(20_000).optional(),
+  timeComplexity: z.string().max(200).optional(),
+  spaceComplexity: z.string().max(200).optional(),
+};
+export const SESSION_TEXT_FIELDS = ["notes", "timeComplexity", "spaceComplexity"] as const;
+export type SessionTextField = (typeof SESSION_TEXT_FIELDS)[number];
+export type SessionText = Partial<Record<SessionTextField, string>>;
+
 export const sessionNotesEvent = z.object({
   ...base,
   type: z.literal("session.notes"),
   /** Cumulative snapshot of the session's free-text fields; omitted fields are left unchanged. */
   payload: z.object({
     sessionId: uuid,
-    notes: z.string().max(20_000).optional(),
-    timeComplexity: z.string().max(200).optional(),
-    spaceComplexity: z.string().max(200).optional(),
+    ...sessionTextFields,
+    /**
+     * What the extension last knew the dashboard had for each edited field. If the dashboard's
+     * text has changed since, the edit is not applied over it: both versions are kept.
+     */
+    base: z.object(sessionTextFields).optional(),
   }),
 });
 
@@ -149,6 +161,10 @@ export type SyncEventResult = {
   /** processed = applied now; duplicate = already applied earlier (safe); rejected = permanent failure. */
   status: "processed" | "duplicate" | "rejected";
   error?: string;
+  /** session.notes only: the session's text fields as stored after applying it. */
+  stored?: SessionText;
+  /** session.notes only: the dashboard's text had changed since `base`, so both versions were kept. */
+  conflict?: boolean;
 };
 
 /** What the extension needs to know about a problem/session from the server. */

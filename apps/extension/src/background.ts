@@ -4,8 +4,9 @@
  * time; nothing important lives only in memory.
  */
 import type { Reflection } from "@lcc/shared";
+import { ensureSyncAlarm, SYNC_ALARM } from "./lib/alarms";
 import { httpApi } from "./lib/api";
-import { Controller, type TabState } from "./lib/controller";
+import { Controller, isLeetCodeUrl, type TabState } from "./lib/controller";
 import type { Intercepted } from "./lib/intercept";
 import type { BgRequest } from "./lib/messages";
 import { chromeKV } from "./lib/storage";
@@ -29,21 +30,24 @@ const controller: Controller = new Controller({
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
-  await chrome.alarms.create("lcc-sync", { periodInMinutes: 0.5 });
   if (details.reason === "install") chrome.runtime.openOptionsPage().catch(() => undefined);
 });
-chrome.runtime.onStartup.addListener(async () => {
-  await chrome.alarms.create("lcc-sync", { periodInMinutes: 0.5 });
-  void controller.flush();
-});
+chrome.runtime.onStartup.addListener(() => void controller.flush());
+// Every time the worker starts: after install, browser start, or the extension being re-enabled.
+void ensureSyncAlarm(chrome.alarms).catch(() => undefined);
 
 chrome.alarms.onAlarm.addListener(async (a) => {
-  if (a.name !== "lcc-sync") return;
+  if (a.name !== SYNC_ALARM) return;
   await controller.flush();
   await controller.reconcile();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => void controller.onTabClosed(tabId));
+// A tab that navigates off LeetCode has no content script left to report it.
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.url === undefined && info.status === undefined) return;
+  if (!isLeetCodeUrl(tab.url)) void controller.onTabLeft(tabId);
+});
 
 /** What content scripts on leetcode.com may ask for. Everything else (settings, token, sync, finishing…) is for extension pages only. */
 const CONTENT_SCRIPT_MESSAGES = new Set<BgRequest["type"]>(["page", "heartbeat", "intercepted", "start", "resume", "ignore", "open-dashboard"]);
@@ -82,6 +86,9 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
       return controller.abandon(msg.sessionId);
     case "panel:get":
       return controller.panelState(msg.tabId ?? null);
+    case "panel:input":
+      if (tabId != null) await controller.onPanelInput(tabId);
+      return null;
     case "list:import":
       return tabId != null ? controller.importStudyPlan(tabId) : null;
     case "sync:now": {

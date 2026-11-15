@@ -14,12 +14,19 @@ import { HEARTBEAT_MS } from "../lib/activity";
 import type { TabState } from "../lib/controller";
 import { isInterceptedMessage, studyPlanFromNextData } from "../lib/intercept";
 import { send } from "../lib/messages";
+import { pageTitle } from "../lib/page-info";
 import { renderOverlay } from "./overlay";
 
 const HASH_RE = /lcc-session=([0-9a-f-]{16,64})/i;
 // Read the hash as early as possible (document_start) before the SPA rewrites the URL.
 let hashSessionId: string | null = HASH_RE.exec(location.hash)?.[1] ?? null;
 let currentSlug: string | null = null;
+/** False until the worker has taken the current page's report; retried every second until it has. */
+let pageReported = false;
+let reporting = false;
+/** Tab title still showing the previous problem after in-app navigation (see pageTitle). */
+let staleTitle: string | null = null;
+let lastTitle = document.title;
 let captureReady = false;
 let lastInputAt = Date.now();
 let state: TabState | null = null;
@@ -43,22 +50,34 @@ async function safeSend<T>(msg: Parameters<typeof send>[0]): Promise<T | null> {
   }
 }
 
-function pageTitle(): { title: string | null; frontendId: string | null } {
-  // document.title looks like "1768. Merge Strings Alternately - LeetCode" (or without the number).
-  const t = document.title.replace(/\s*-\s*LeetCode\s*$/i, "").trim();
-  const m = /^(\d+)\.\s+(.+)$/.exec(t);
-  if (m) return { frontendId: m[1]!, title: m[2]! };
-  return { frontendId: null, title: t && !/^leetcode/i.test(t) ? t : null };
-}
-
+/** Called on load and every second: reports a new problem, a failed report again, or a title that was held back. */
 async function reportPage() {
+  if (reporting) return;
   const slug = parseProblemSlug(location.href);
-  if (slug === currentSlug && slug !== null) return;
-  currentSlug = slug;
-  const { title, frontendId } = pageTitle();
-  const s = await safeSend<TabState>({ type: "page", slug, title, frontendId, hashSessionId });
-  hashSessionId = null; // only meaningful for the first load
-  if (s) setState(s);
+  if (slug !== currentSlug) {
+    // In-app navigation: LeetCode changes the address first and the tab title a moment later.
+    staleTitle = currentSlug !== null && slug !== null && document.title === lastTitle ? document.title : null;
+    currentSlug = slug;
+    pageReported = false;
+  } else if (pageReported) {
+    // Already reported; only the new problem's title appearing is worth another report.
+    if (staleTitle === null || document.title === staleTitle) return;
+    staleTitle = null;
+  }
+  lastTitle = document.title;
+  const { title, frontendId } = pageTitle(document.title, staleTitle);
+  reporting = true;
+  try {
+    const s = await safeSend<TabState>({ type: "page", slug, title, frontendId, hashSessionId });
+    // A lost report would leave the worker thinking this tab is elsewhere, and it would then drop
+    // this page's submissions: keep trying until it gets through.
+    if (!s || currentSlug !== slug) return;
+    pageReported = true;
+    hashSessionId = null; // only meaningful for the first load
+    setState(s);
+  } finally {
+    reporting = false;
+  }
 }
 
 function setState(s: TabState | null) {
@@ -118,8 +137,7 @@ function boot() {
   // SPA navigation: LeetCode changes problems without a full page load.
   setInterval(() => {
     if (!alive()) return;
-    const slug = parseProblemSlug(location.href);
-    if (slug !== currentSlug) void reportPage();
+    void reportPage();
     checkEmbeddedPlan();
   }, 1000);
   setInterval(heartbeat, HEARTBEAT_MS);

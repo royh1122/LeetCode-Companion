@@ -1,4 +1,4 @@
-import type { ExtensionContext, ProblemHint, Reflection, SyncEvent, SyncEventType, Verdict } from "@lcc/shared";
+import { SESSION_TEXT_FIELDS, type ExtensionContext, type ProblemHint, type Reflection, type SessionText, type SyncEvent, type SyncEventType, type Verdict } from "@lcc/shared";
 import { applyHeartbeat, displayActiveMs, isActive, type ActivityState } from "./activity";
 import type { Api, ApiError } from "./api";
 import type { CapturedList, Intercepted } from "./intercept";
@@ -51,6 +51,13 @@ export interface LocalSession {
   lastActivitySentMs?: number;
   /** Server doesn't know this id (e.g. failed start). */
   missingOnServer?: boolean;
+  /**
+   * The text fields as the dashboard last had them, as far as the extension knows. Sent as the
+   * base of a notes edit, so the dashboard can tell when its text changed in the meantime.
+   */
+  synced?: SessionText;
+  /** When the dashboard last kept its own newer text next to an edit from here (both versions kept). */
+  conflictAt?: number;
   updatedAt: number;
 }
 
@@ -68,16 +75,46 @@ export interface TabState {
   /** When `context` was fetched; refreshed after a session for this problem finishes and syncs. */
   contextAt?: number;
   captureReady: boolean;
+  /** Last typing in the side panel while it showed this tab (the page itself sees no input then). */
+  panelInputAt?: number;
 }
 
-/** Only http(s) on 127.0.0.1 or localhost. */
+/**
+ * Only http on 127.0.0.1 or localhost. The dashboard serves plain http, and the extension's
+ * host permissions cover only those two addresses over http.
+ */
 export function isLocalDashboardUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    return (u.protocol === "http:" || u.protocol === "https:") && ["127.0.0.1", "localhost"].includes(u.hostname);
+    return u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname);
   } catch {
     return false;
   }
+}
+
+/** Chrome hides the address of pages the extension can't access (`undefined`): those aren't LeetCode either. */
+export function isLeetCodeUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname === "leetcode.com";
+  } catch {
+    return false;
+  }
+}
+
+const emptyText = (): SessionText => ({ notes: "", timeComplexity: "", spaceComplexity: "" });
+/** The text fields as a dashboard session reports them (null = empty). */
+function textOf(srv: { notes?: string | null; timeComplexity?: string | null; spaceComplexity?: string | null }): SessionText {
+  return { notes: srv.notes ?? "", timeComplexity: srv.timeComplexity ?? "", spaceComplexity: srv.spaceComplexity ?? "" };
+}
+
+/** Warning shown in the panel when the offline queue hit its size limit. */
+export interface QueueWarning {
+  /** Captured submissions kept without their code. */
+  codeDropped: number;
+  /** Changes not kept at all. */
+  dropped: number;
+  at: number;
 }
 
 /** For display (type + error) only: the payload (code, notes) is left out. */
@@ -130,11 +167,20 @@ export interface Deps {
   uuid?: () => string;
   /** Notify a tab's content script that its state changed. */
   notifyTab?: (tabId: number, state: TabState) => void;
+  /** Size limit of the offline queue, in JSON characters (tests use a small one). */
+  queueMaxChars?: number;
 }
 
 const DEFAULT_CONFIG: Config = { serverUrl: "http://127.0.0.1:4317", token: "", clientId: "" };
 const ACTIVITY_SYNC_MS = 60_000;
 const MAX_BATCH = 50;
+/**
+ * chrome.storage.local holds 10 MB in all. Keep the queue to about half, leaving room for sessions,
+ * set-aside events and the rest; past that, captures would fail to save without a word.
+ */
+export const QUEUE_MAX_CHARS = 5_000_000;
+/** Typing in the side panel stands in for page focus this long (the page is unfocused while you type there). */
+const PANEL_FOCUS_MS = 60_000;
 
 export class Controller {
   private chain: Promise<unknown> = Promise.resolve();
@@ -165,7 +211,7 @@ export class Controller {
   }
   async setConfig(patch: Partial<Config>) {
     // Code and notes must only ever go to a dashboard on this computer.
-    if (patch.serverUrl !== undefined && !isLocalDashboardUrl(patch.serverUrl)) throw new Error("The dashboard must run on this computer (localhost / 127.0.0.1).");
+    if (patch.serverUrl !== undefined && !isLocalDashboardUrl(patch.serverUrl)) throw new Error("The dashboard must run on this computer, at http://localhost or http://127.0.0.1.");
     return this.lock(async () => {
       const c = { ...(await this.getConfig()), ...patch };
       await this.deps.local.set({ config: c, conn: { status: c.token ? "unknown" : "unpaired", lastOkAt: null, lastError: null } satisfies Conn });
@@ -210,7 +256,50 @@ export class Controller {
       q = q.filter((x) => !(x.event.type === type && (x.event.payload as { sessionId?: string }).sessionId === opts.coalesceKey));
     }
     q.push({ event, attempts: 0 });
-    await this.deps.local.set({ seq, queue: q });
+    const lost = this.fitQueue(q, event.id);
+    if (lost) {
+      const prev = await this.deps.local.get<QueueWarning>("queueWarning");
+      const queueWarning: QueueWarning = { codeDropped: (prev?.codeDropped ?? 0) + lost.codeDropped, dropped: (prev?.dropped ?? 0) + lost.dropped, at: this.now() };
+      await this.deps.local.set({ seq, queue: q, queueWarning });
+    } else {
+      await this.deps.local.set({ seq, queue: q });
+    }
+  }
+
+  /**
+   * Keep the queue under its size limit (it grows while the dashboard is unreachable). Gives up,
+   * in order: activity snapshots (the dashboard has the time up to the last one it got), then the
+   * code of the oldest captured submissions (the submission and its verdict are still recorded),
+   * and only then the new change itself. Edits `q` in place; returns what was lost, if anything.
+   */
+  private fitQueue(q: QueuedEvent[], newId: string): { codeDropped: number; dropped: number } | null {
+    const max = this.deps.queueMaxChars ?? QUEUE_MAX_CHARS;
+    let size = JSON.stringify(q).length;
+    if (size <= max) return null;
+    let codeDropped = 0;
+    let dropped = 0;
+    for (let i = 0; i < q.length && size > max; ) {
+      if (q[i]!.event.type === "session.activity" && q[i]!.event.id !== newId) {
+        size -= JSON.stringify(q[i]).length + 1;
+        q.splice(i, 1);
+      } else i++;
+    }
+    for (const item of q) {
+      if (size <= max) break;
+      const p = item.event.payload as { code?: string | null };
+      if (item.event.type !== "submission.captured" || !p.code) continue;
+      size -= JSON.stringify(p.code).length - "null".length;
+      p.code = null;
+      codeDropped++;
+    }
+    if (size > max) {
+      const i = q.findIndex((x) => x.event.id === newId);
+      if (i >= 0) {
+        q.splice(i, 1);
+        dropped++;
+      }
+    }
+    return codeDropped || dropped ? { codeDropped, dropped } : null;
   }
 
   private emptyActivity(): ActivityState {
@@ -222,6 +311,13 @@ export class Controller {
     tabs[String(tabId)] = t;
     await this.deps.ephemeral.set({ tabs });
     this.deps.notifyTab?.(tabId, t);
+  }
+
+  private async forgetStudyPlan(tabId: number) {
+    const plans = (await this.deps.ephemeral.get<Record<string, StudyPlanOffer>>("studyPlans")) ?? {};
+    if (!(String(tabId) in plans)) return;
+    delete plans[String(tabId)];
+    await this.deps.ephemeral.set({ studyPlans: plans });
   }
 
   private openLocalFor(sessions: Record<string, LocalSession>, slug: string) {
@@ -248,7 +344,8 @@ export class Controller {
       if (prev && prev.slug === info.slug && prev.mode !== "idle" && !(info.hashSessionId && info.hashSessionId !== prev.sessionId)) {
         const still = prev.sessionId ? sessions[prev.sessionId] : null;
         if (prev.mode !== "bound" || (still && (still.status === "in_progress" || still.status === "paused"))) {
-          const t = { ...prev, title: info.title ?? prev.title };
+          // After in-app navigation the page reports the title once it shows the new problem's.
+          const t = { ...prev, title: info.title ?? prev.title, frontendId: info.frontendId ?? prev.frontendId };
           await this.saveTab(tabId, t);
           return t;
         }
@@ -287,6 +384,7 @@ export class Controller {
             s.notes = server.notes ?? "";
             if (server.timeComplexity) s.timeComplexity = server.timeComplexity;
             if (server.spaceComplexity) s.spaceComplexity = server.spaceComplexity;
+            s.synced = textOf(server);
             s.activity.activeMs = server.activeMs ?? 0;
             s.isReview = server.isReview;
           }
@@ -349,6 +447,7 @@ export class Controller {
       }
       const hint: ProblemHint = { slug: t.slug, title: t.context?.problem?.title ?? t.title, frontendId: t.context?.problem?.frontendId ?? t.frontendId };
       const s = this.newLocal(this.uuid(), hint, this.now(), t.context);
+      s.synced = emptyText(); // a new session starts with no text on the dashboard
       sessions[s.id] = s;
       await this.deps.local.set({ sessions });
       await this.enqueue("session.start", { sessionId: s.id, problem: hint, startedAt: s.startedAt });
@@ -368,6 +467,7 @@ export class Controller {
         s.notes = srv.notes ?? "";
         if (srv.timeComplexity) s.timeComplexity = srv.timeComplexity;
         if (srv.spaceComplexity) s.spaceComplexity = srv.spaceComplexity;
+        s.synced = textOf(srv);
         s.activity.activeMs = srv.activeMs ?? 0;
         s.status = srv.status === "paused" ? "paused" : "in_progress";
         s.isReview = srv.isReview;
@@ -405,6 +505,32 @@ export class Controller {
       const tabs = await this.tabs();
       delete tabs[String(tabId)];
       await this.deps.ephemeral.set({ tabs });
+      await this.forgetStudyPlan(tabId);
+    });
+  }
+
+  /**
+   * The tab moved to a page off LeetCode (its content script is gone, so it can't say so itself).
+   * It stops being bound; the session stays open, and returning to the problem offers to resume it.
+   */
+  onTabLeft(tabId: number) {
+    return this.lock(async () => {
+      const t = (await this.tabs())[String(tabId)];
+      if (t && (t.slug || t.mode !== "idle")) {
+        await this.saveTab(tabId, { slug: null, title: null, frontendId: null, mode: "idle", sessionId: null, resumable: null, context: null, captureReady: false });
+      }
+      await this.forgetStudyPlan(tabId);
+    });
+  }
+
+  /** The user typed in the side panel while it showed this tab. */
+  onPanelInput(tabId: number) {
+    return this.lock(async () => {
+      const tabs = await this.tabs();
+      const t = tabs[String(tabId)];
+      if (!t) return;
+      tabs[String(tabId)] = { ...t, panelInputAt: this.now() };
+      await this.deps.ephemeral.set({ tabs });
     });
   }
 
@@ -424,7 +550,10 @@ export class Controller {
       const s = sessions[t.sessionId];
       if (!s || s.status === "completed" || s.status === "abandoned") return;
       const idle = t.context?.settings?.idleThresholdSec ?? 300;
-      const active = s.status === "in_progress" && isActive(h, now, idle);
+      // Typing in the side panel takes focus from the page, which then sees no input: count it too.
+      const panelInputAt = t.panelInputAt ?? 0;
+      const typingInPanel = now - panelInputAt < PANEL_FOCUS_MS;
+      const active = s.status === "in_progress" && isActive({ visible: h.visible, focused: h.focused || typingInPanel, lastInputAt: Math.max(h.lastInputAt, panelInputAt) }, now, idle);
       s.activity = applyHeartbeat(s.activity, tabId, now, active);
       s.updatedAt = now;
       sessions[s.id] = s;
@@ -539,16 +668,22 @@ export class Controller {
    * (these, plus those of an unsent earlier edit it replaces), so a field that was not touched in
    * the panel never overwrites what the dashboard has for it.
    */
-  setNotes(id: string, patch: { notes?: string; timeComplexity?: string; spaceComplexity?: string }) {
+  setNotes(id: string, patch: SessionText) {
     return this.lock(async () => {
-      await this.mutateSession(id, (x) => {
-        if (patch.notes !== undefined) x.notes = patch.notes;
-        if (patch.timeComplexity !== undefined) x.timeComplexity = patch.timeComplexity;
-        if (patch.spaceComplexity !== undefined) x.spaceComplexity = patch.spaceComplexity;
+      const s = await this.mutateSession(id, (x) => {
+        for (const f of SESSION_TEXT_FIELDS) if (patch[f] !== undefined) x[f] = patch[f];
       });
       const unsent = (await this.queue()).find((x) => x.event.type === "session.notes" && (x.event.payload as { sessionId?: string }).sessionId === id);
-      const edited: Record<string, unknown> = { ...(unsent?.event.payload as Record<string, unknown> | undefined), sessionId: id };
-      for (const f of ["notes", "timeComplexity", "spaceComplexity"] as const) if (patch[f] !== undefined) edited[f] = patch[f];
+      const prev = unsent?.event.payload as (SessionText & { base?: SessionText }) | undefined;
+      const edited: SessionText & { sessionId: string; base?: SessionText } = { ...prev, sessionId: id };
+      // The base is what the dashboard had before the first of the edits this event carries.
+      const base: SessionText = { ...prev?.base };
+      for (const f of SESSION_TEXT_FIELDS) {
+        if (patch[f] === undefined) continue;
+        edited[f] = patch[f];
+        if (!(f in base) && s.synced?.[f] !== undefined) base[f] = s.synced[f];
+      }
+      if (Object.keys(base).length) edited.base = base;
       await this.enqueue("session.notes", edited, { coalesceKey: id });
       void this.flush();
     });
@@ -692,7 +827,31 @@ export class Controller {
             if (sid && r.sessionId && r.sessionId !== sid && sessions[sid]) sessions[sid]!.serverId = r.sessionId;
             if (sid && r.status === "rejected" && item.event.type === "session.start" && sessions[sid]) sessions[sid]!.missingOnServer = true;
           }
-          await this.deps.local.set({ queue: keep, failed: capFailed(failed), sessions });
+          // Notes edits: learn what the dashboard now has. Taken from the batch, not the queue: an
+          // edit typed while this one was on its way has already replaced it in the queue.
+          for (const item of batch) {
+            const r = byId.get(item.event.id);
+            if (item.event.type !== "session.notes" || !r || r.status === "rejected") continue;
+            const p = item.event.payload as SessionText & { sessionId: string };
+            const s = sessions[p.sessionId];
+            if (!s) continue;
+            // "duplicate" (sent before, answer lost) carries no text: assume it was applied as sent.
+            const stored: SessionText = r.stored ?? Object.fromEntries(SESSION_TEXT_FIELDS.filter((f) => p[f] !== undefined).map((f) => [f, p[f]]));
+            s.synced = { ...s.synced, ...stored };
+            const next = keep.find((x) => x.event.type === "session.notes" && (x.event.payload as { sessionId?: string }).sessionId === p.sessionId);
+            if (!next) {
+              // Nothing newer typed here: show what the dashboard stored (on a conflict, both versions).
+              for (const f of SESSION_TEXT_FIELDS) if (stored[f] !== undefined) s[f] = stored[f];
+            } else if (!r.conflict) {
+              // The newer edit was based on this one's text, which the dashboard now has.
+              const np = next.event.payload as { base?: SessionText };
+              for (const f of SESSION_TEXT_FIELDS) if (p[f] !== undefined && np.base && f in np.base) np.base[f] = stored[f] ?? p[f];
+            }
+            // On a conflict the newer edit keeps its old base, so it too is kept next to the dashboard's text, never over it.
+            if (r.conflict) s.conflictAt = this.now();
+          }
+          const cleared = keep.length === 0 ? { queueWarning: null } : {};
+          await this.deps.local.set({ queue: keep, failed: capFailed(failed), sessions, ...cleared });
         });
       }
     } finally {
@@ -758,6 +917,8 @@ export class Controller {
         if (typeof srv.notes === "string") s.notes = srv.notes;
         if (typeof srv.timeComplexity === "string") s.timeComplexity = srv.timeComplexity;
         if (typeof srv.spaceComplexity === "string") s.spaceComplexity = srv.spaceComplexity;
+        // Older dashboards don't report the text: then what it has is unknown.
+        if (srv.notes !== undefined) s.synced = textOf(srv);
         if (srv.status === "completed" || srv.status === "abandoned") {
           if (s.status === "in_progress" || s.status === "paused") await this.unbindSession(s.id, "ignored");
           s.status = srv.status;
@@ -833,7 +994,7 @@ export class Controller {
 
   // ---------- read models ----------
   async panelState(tabId: number | null) {
-    const [tabs, sessions, q, failed, conn, cfg, plans] = await Promise.all([
+    const [tabs, sessions, q, failed, conn, cfg, plans, queueWarning] = await Promise.all([
       this.tabs(),
       this.sessions(),
       this.queue(),
@@ -841,6 +1002,7 @@ export class Controller {
       this.conn(),
       this.getConfig(),
       this.deps.ephemeral.get<Record<string, StudyPlanOffer>>("studyPlans"),
+      this.deps.local.get<QueueWarning | null>("queueWarning"),
     ]);
     const offer = tabId != null ? plans?.[String(tabId)] : undefined;
     const tab = tabId != null ? (tabs[String(tabId)] ?? null) : null;
@@ -854,6 +1016,8 @@ export class Controller {
         .filter((s) => (s.status === "completed" || s.status === "abandoned") && tab?.slug && s.problem.slug === tab.slug)
         .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0] ?? null,
       queueLength: q.length,
+      /** The offline queue hit its size limit: what could not be kept. Clears once the queue is sent. */
+      queueWarning: queueWarning ?? null,
       pendingForSession,
       // Payloads (code, notes) stay in the worker; the panel only needs what to show.
       failed: failed.slice(-5).map((f) => ({ ...f, event: brief(f.event) })),

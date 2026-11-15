@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parseProblemSlug, type ExtensionContext, type ExtensionSessionState } from "@lcc/shared";
 import { applyHeartbeat, isActive } from "../src/lib/activity";
 import type { Api } from "../src/lib/api";
-import { Controller } from "../src/lib/controller";
+import { ensureSyncAlarm } from "../src/lib/alarms";
+import { Controller, isLeetCodeUrl } from "../src/lib/controller";
 import { interpret, isInterceptedMessage, studyPlanFromNextData } from "../src/lib/intercept";
+import { pageTitle } from "../src/lib/page-info";
 import { MemoryKV } from "../src/lib/storage";
 import * as F from "./fixtures";
 
@@ -134,6 +136,10 @@ function fakeApi(opts: { online?: boolean; context?: Partial<ExtensionContext> }
     broken: false,
     /** Some other program listens on the configured address: it answers 404 to everything. */
     notOurs: false,
+    /** Session text fields as the dashboard stores them (session.notes results report them back). */
+    notes: {} as Record<string, Record<string, string>>,
+    /** The next session.notes finds this newer dashboard text: the dashboard keeps it (both kept). */
+    conflictWith: null as Record<string, string> | null,
   };
   const down = () =>
     !state.online
@@ -179,6 +185,15 @@ function fakeApi(opts: { online?: boolean; context?: Partial<ExtensionContext> }
             if (seenIds.has(e.id)) return { id: e.id, status: "duplicate" as const };
             seenIds.add(e.id);
             sent.push(e);
+            if (e.type === "session.notes") {
+              const sid = e.payload.sessionId as string;
+              const cur = (state.notes[sid] ??= { notes: "", timeComplexity: "", spaceComplexity: "" });
+              for (const f of ["notes", "timeComplexity", "spaceComplexity"]) if (typeof e.payload[f] === "string") cur[f] = e.payload[f] as string;
+              const conflict = !!state.conflictWith;
+              Object.assign(cur, state.conflictWith);
+              state.conflictWith = null;
+              return { id: e.id, status: "processed" as const, stored: { ...cur }, conflict };
+            }
             return { id: e.id, status: "processed" as const };
           }),
         },
@@ -194,13 +209,14 @@ function fakeApi(opts: { online?: boolean; context?: Partial<ExtensionContext> }
   return { api, sent, state, imported };
 }
 
-function setup(o: Parameters<typeof fakeApi>[0] = {}) {
+function setup(o: Parameters<typeof fakeApi>[0] & { queueMaxChars?: number } = {}) {
   let t = 1_000_000;
   let n = 0;
   const local = new MemoryKV();
   const ephemeral = new MemoryKV();
   const fa = fakeApi(o);
-  const mk = () => new Controller({ local, ephemeral, api: fa.api, now: () => t, uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}` });
+  const mk = () =>
+    new Controller({ local, ephemeral, api: fa.api, now: () => t, uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`, queueMaxChars: o.queueMaxChars });
   return { ...fa, local, ephemeral, mk, ctl: mk(), advance: (ms: number) => (t += ms), now: () => t };
 }
 
@@ -362,13 +378,15 @@ describe("Controller", () => {
     await env.ctl.setNotes(sessionId!, { notes: "hash map" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     const first = env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload;
-    expect(first).toEqual({ sessionId, notes: "hash map" });
+    expect(first).toEqual({ sessionId, notes: "hash map", base: { notes: "" } });
     await env.ctl.setNotes(sessionId!, { timeComplexity: "O(n)" });
     await env.ctl.setNotes(sessionId!, { spaceComplexity: "O(n)" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     // Coalesced into one event carrying the fields edited since the last one was sent. The notes
     // were not touched again, so they are not sent again (the dashboard may have newer ones).
-    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, timeComplexity: "O(n)", spaceComplexity: "O(n)" });
+    const last = env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload;
+    expect(last).toMatchObject({ sessionId, timeComplexity: "O(n)", spaceComplexity: "O(n)", base: { spaceComplexity: "" } });
+    expect(last).not.toHaveProperty("notes");
     await env.ctl.finish(sessionId!, { outcome: "independent", hintsUsed: false, spaceComplexity: "O(1)" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
     expect(env.sent.find((e) => e.type === "session.finish")!.payload.reflection).toMatchObject({ spaceComplexity: "O(1)" });
@@ -538,7 +556,7 @@ describe("Controller", () => {
     // Only the complexity is edited in the panel: the event must not carry the notes at all.
     await env.ctl.setNotes(sessionId!, { timeComplexity: "O(n)" });
     for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
-    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, timeComplexity: "O(n)" });
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, timeComplexity: "O(n)", base: { timeComplexity: "" } });
     // While an edit of ours is still waiting to be sent, the dashboard's copy must not replace it.
     env.state.online = false;
     await env.ctl.setNotes(sessionId!, { notes: "typed in the panel" });
@@ -577,5 +595,148 @@ describe("Controller", () => {
     await env.ctl.startSession(1);
     expect(await env.ctl.onPage(1, { slug: "3sum" })).toMatchObject({ mode: "offer", sessionId: null });
     expect(await env.ctl.onPage(1, { slug: null })).toMatchObject({ mode: "idle" });
+  });
+});
+
+describe("milestone F: extension robustness", () => {
+  const drain = async (env: ReturnType<typeof setup>) => {
+    for (let i = 0; i < 10 && ((await env.local.get<unknown[]>("queue")) ?? []).length; i++) await env.ctl.flush();
+  };
+  const plan = () => interpret("POST", "https://leetcode.com/graphql/", F.STUDY_PLAN_REQUEST, F.STUDY_PLAN_RESPONSE)!;
+
+  it("F1/F4: a tab that leaves LeetCode is unbound, and closed or departed tabs drop their study plan", async () => {
+    expect(isLeetCodeUrl("https://leetcode.com/problems/two-sum/")).toBe(true);
+    expect(isLeetCodeUrl("https://www.google.com/search?q=leetcode.com")).toBe(false);
+    expect(isLeetCodeUrl("http://127.0.0.1:4317/")).toBe(false);
+    // Chrome hides the address of pages the extension has no access to: that is not LeetCode.
+    expect(isLeetCodeUrl(undefined)).toBe(false);
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    const { sessionId } = await env.ctl.startSession(1);
+    await env.ctl.onIntercepted(1, plan());
+    await env.ctl.onTabLeft(1);
+    expect(await env.ctl.tabState(1)).toMatchObject({ mode: "idle", slug: null, sessionId: null });
+    expect((await env.ctl.panelState(1)).studyPlan).toBeNull();
+    // The session itself is kept: coming back to the problem offers to resume it.
+    expect(await env.ctl.onPage(1, { slug: "two-sum" })).toMatchObject({ mode: "offer", resumable: { id: sessionId, source: "local" } });
+    await env.ctl.onIntercepted(2, plan());
+    await env.ctl.onTabClosed(2);
+    expect(await env.ephemeral.get("studyPlans")).toEqual({});
+    // A tab it never saw stays unknown.
+    await env.ctl.onTabLeft(99);
+    expect(await env.ctl.tabState(99)).toBeNull();
+  });
+
+  it("F3: the sync alarm is created when the worker starts without one, and only then", async () => {
+    const made: string[] = [];
+    let existing: object | undefined;
+    const alarms = {
+      get: async () => existing,
+      create: async (name: string) => {
+        made.push(name);
+        existing = {};
+      },
+    };
+    await ensureSyncAlarm(alarms);
+    await ensureSyncAlarm(alarms);
+    expect(made).toEqual(["lcc-sync"]);
+  });
+
+  it("F5: a full offline queue drops activity first, then the oldest code, and says so", async () => {
+    const env = setup({ online: false, queueMaxChars: 6_000 });
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    await env.ctl.startSession(1);
+    await env.ctl.onHeartbeat(1, { visible: true, focused: true, lastInputAt: env.now(), captureReady: true });
+    expect(((await env.local.get<{ event: { type: string } }[]>("queue")) ?? []).map((x) => x.event.type)).toContain("session.activity");
+    const sub = (n: number) => ({ type: "submit" as const, slug: "two-sum", submissionId: String(n), lang: "python3", questionId: "1", code: `# ${n}\n${"x".repeat(1500)}` });
+    for (let n = 1; n <= 5; n++) {
+      env.advance(1000);
+      await env.ctl.onIntercepted(1, sub(n));
+    }
+    const q = (await env.local.get<{ event: { type: string; payload: Record<string, unknown> } }[]>("queue"))!;
+    expect(JSON.stringify(q).length).toBeLessThanOrEqual(6_000);
+    expect(q.map((x) => x.event.type)).toEqual(["session.start", ...Array<string>(5).fill("submission.captured")]);
+    const codes = q.filter((x) => x.event.type === "submission.captured").map((x) => x.event.payload.code as string | null);
+    expect(codes[0]).toBeNull();
+    expect(codes.at(-1)).toContain("# 5");
+    expect((await env.ctl.panelState(1)).queueWarning).toMatchObject({ codeDropped: codes.filter((c) => c === null).length, dropped: 0 });
+    // Once everything has reached the dashboard, the warning goes away.
+    env.state.online = true;
+    await drain(env);
+    expect((await env.ctl.panelState(1)).queueWarning).toBeNull();
+  });
+
+  it("F7: only accepts a plain http dashboard address (the extension may not call https://localhost)", async () => {
+    const env = setup();
+    await expect(env.ctl.setConfig({ serverUrl: "https://localhost:4317" })).rejects.toThrow(/this computer/);
+    await expect(env.ctl.setConfig({ serverUrl: "http://localhost:4317" })).resolves.toMatchObject({ serverUrl: "http://localhost:4317" });
+  });
+
+  it("F9: after in-app navigation the previous problem's title is not used; the real one fills in later", async () => {
+    expect(pageTitle("1. Two Sum - LeetCode", null)).toEqual({ frontendId: "1", title: "Two Sum" });
+    // The address already shows the new problem but the tab title is still the old one.
+    expect(pageTitle("1. Two Sum - LeetCode", "1. Two Sum - LeetCode")).toEqual({ frontendId: null, title: null });
+    expect(pageTitle("15. 3Sum - LeetCode", "1. Two Sum - LeetCode")).toEqual({ frontendId: "15", title: "3Sum" });
+    const env = setup({ context: { problem: null } }); // a problem the dashboard doesn't know yet
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "3sum", title: null, frontendId: null });
+    await env.ctl.onPage(1, { slug: "3sum", title: "3Sum", frontendId: "15" });
+    await env.ctl.startSession(1);
+    await drain(env);
+    expect(env.sent.find((e) => e.type === "session.start")!.payload.problem).toMatchObject({ slug: "3sum", title: "3Sum", frontendId: "15" });
+  });
+
+  it("F10: a fractional finish time is rounded, so the dashboard accepts the verdict", () => {
+    const url = "https://leetcode.com/submissions/detail/1000000001/v2/check/";
+    expect(interpret("GET", url, null, { ...F.CHECK_WRONG_REAL_V2, task_finish_time: 1700000000123.6 })).toMatchObject({ result: { finishedAt: 1700000000124 } });
+    expect(interpret("GET", url, null, { ...F.CHECK_WRONG_REAL_V2, task_finish_time: 1700000000.5 })).toMatchObject({ result: { finishedAt: 1700000000500 } });
+  });
+
+  it("F11: typing in the side panel counts as active time", async () => {
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    await env.ctl.startSession(1);
+    // The page has had no input for a while and has lost focus to the panel.
+    const page = () => ({ visible: true, focused: false, lastInputAt: env.now() - 400_000, captureReady: true });
+    for (let i = 0; i < 3; i++) {
+      await env.ctl.onPanelInput(1);
+      await env.ctl.onHeartbeat(1, page());
+      env.advance(15_000);
+    }
+    expect((await env.ctl.panelState(1)).session!.activity.activeMs).toBe(30_000);
+    // Without panel input, the same heartbeats are idle.
+    env.advance(120_000);
+    await env.ctl.onHeartbeat(1, page());
+    env.advance(15_000);
+    await env.ctl.onHeartbeat(1, page());
+    expect((await env.ctl.panelState(1)).session!.activity.activeMs).toBe(30_000);
+  });
+
+  it("F12: panel edits carry what the dashboard last had, and newer dashboard text is kept", async () => {
+    const env = setup();
+    await env.ctl.setConfig({ token: "t" });
+    await env.ctl.onPage(1, { slug: "two-sum" });
+    const { sessionId } = await env.ctl.startSession(1);
+    await env.ctl.setNotes(sessionId!, { notes: "v1" });
+    await drain(env);
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, notes: "v1", base: { notes: "" } });
+    // Two edits while offline coalesce; the base stays what the dashboard had before the first.
+    env.state.online = false;
+    await env.ctl.setNotes(sessionId!, { notes: "v2" });
+    await env.ctl.setNotes(sessionId!, { notes: "v3", timeComplexity: "O(n)" });
+    env.state.online = true;
+    env.state.conflictWith = { notes: "typed in the dashboard meanwhile" };
+    await drain(env);
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, notes: "v3", timeComplexity: "O(n)", base: { notes: "v1", timeComplexity: "" } });
+    // The dashboard kept both; the panel now shows what it stored and flags it.
+    const s = (await env.ctl.panelState(1)).session!;
+    expect(s).toMatchObject({ notes: "typed in the dashboard meanwhile", timeComplexity: "O(n)" });
+    expect(s.conflictAt).toBe(env.now());
+    await env.ctl.setNotes(sessionId!, { notes: "v4" });
+    await drain(env);
+    expect(env.sent.filter((e) => e.type === "session.notes").at(-1)!.payload).toEqual({ sessionId, notes: "v4", base: { notes: "typed in the dashboard meanwhile" } });
   });
 });

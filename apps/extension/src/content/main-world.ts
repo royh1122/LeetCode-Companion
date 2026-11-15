@@ -51,6 +51,9 @@ declare global {
     try {
       // Anything that throws here (a malformed URL, a used body) must fall through to the real fetch.
       kind = url ? classifyLeetCodeRequest(method, new URL(url, location.href).href) : null;
+      // Of all GraphQL calls, only the one asking for a study plan's question list is read. Most
+      // carry their query as a string: rule the others out now, before copying their response.
+      if (kind?.kind === "graphql" && typeof init?.body === "string" && !asksForStudyPlan(init.body)) kind = null;
       if (kind && kind.kind !== "check" && typeof init?.body !== "string" && input instanceof Request) {
         bodyPromise = input.clone().text().catch(() => null);
       }
@@ -59,16 +62,26 @@ declare global {
     }
     const p = origFetch.apply(this as typeof window, [input, init] as Parameters<typeof fetch>);
     if (kind) {
-      p.then((res) =>
+      p.then((res) => {
+        if (!res.ok) return;
+        // Copy the response right away, before any await: once the page has read the body, it
+        // can no longer be copied.
+        let copy: Response;
+        try {
+          copy = res.clone();
+        } catch {
+          return;
+        }
         safe(async () => {
-          if (!res.ok) return;
-          // Of all GraphQL calls, only the one asking for a study plan's question list is read.
-          if (kind.kind === "graphql" && !asksForStudyPlan(await bodyPromise)) return;
-          const [body, json] = await Promise.all([bodyPromise, res.clone().json().catch(() => null)]);
+          if (kind.kind === "graphql" && !asksForStudyPlan(await bodyPromise)) {
+            void copy.body?.cancel().catch(() => undefined); // not needed: don't keep it buffered
+            return;
+          }
+          const [body, json] = await Promise.all([bodyPromise, copy.json().catch(() => null)]);
           const m = interpret(method, new URL(url, location.href).href, body, json);
           if (m) post(m);
-        }),
-      ).catch(() => undefined);
+        });
+      }).catch(() => undefined);
     }
     return p;
   } as typeof fetch;

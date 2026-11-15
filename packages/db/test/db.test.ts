@@ -33,6 +33,7 @@ import {
   moveQueueItem,
   pendingQueue,
   processSyncEvents,
+  EXTENSION_CONFLICT_MARK,
   recordSubmission,
   rescheduleAssignment,
   schema,
@@ -893,6 +894,27 @@ describe("sync events", () => {
     const late = processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "older draft", timeComplexity: "O(n)" })]);
     expect(late[0]!.status).toBe("processed");
     expect(getProblemDetail(db, "two-sum")!.sessions[0]).toMatchObject({ notes: "final text", timeComplexity: "O(n)" });
+  });
+
+  it("an extension edit made over text the dashboard has since changed keeps both versions (F12)", () => {
+    const db = freshDb();
+    const sid = randomUUID();
+    processSyncEvents(db, [ev("session.start", { sessionId: sid, problem: { slug: "two-sum" }, startedAt: at(MON, 10) })]);
+    const first = processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "panel v1", base: { notes: "" } })]);
+    expect(first[0]).toMatchObject({ status: "processed", conflict: false, stored: { notes: "panel v1", timeComplexity: "", spaceComplexity: "" } });
+    // The dashboard then saves newer text; the panel, not yet refreshed, edits on top of "panel v1".
+    updateSessionNotes(db, sid, { notes: "dashboard v2", timeComplexity: "O(n log n)" });
+    const r = processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "panel v1 + more", timeComplexity: "O(n)", spaceComplexity: "O(1)", base: { notes: "panel v1", timeComplexity: "", spaceComplexity: "" } })]);
+    expect(r[0]).toMatchObject({ status: "processed", conflict: true });
+    const s = getProblemDetail(db, "two-sum")!.sessions[0]!;
+    // The dashboard's text stays; the panel's text is kept below it; the untouched field is applied.
+    expect(s.notes).toBe(`dashboard v2\n\n${EXTENSION_CONFLICT_MARK}\npanel v1 + more\nTime complexity: O(n)`);
+    expect(s).toMatchObject({ timeComplexity: "O(n log n)", spaceComplexity: "O(1)" });
+    expect(r[0]!.stored).toEqual({ notes: s.notes, timeComplexity: "O(n log n)", spaceComplexity: "O(1)" });
+    // Same text as stored, or no base (older extension): applied as before.
+    expect(processSyncEvents(db, [ev("session.notes", { sessionId: sid, timeComplexity: "O(n log n)", base: { timeComplexity: "stale" } })])[0]).toMatchObject({ conflict: false });
+    processSyncEvents(db, [ev("session.notes", { sessionId: sid, notes: "no base" })]);
+    expect(getProblemDetail(db, "two-sum")!.sessions[0]!.notes).toBe("no base");
   });
 
   it("result arriving without the submit request creates an honest code-less row", () => {

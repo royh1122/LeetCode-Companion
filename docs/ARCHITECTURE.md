@@ -64,8 +64,9 @@ LeetCode page ──(MAIN world: fetch/XHR observer)──postMessage──▶ i
   - `chrome.storage.session` holds tab bindings and pending study-plan offers, which are only valid for one browser run.
 - **Queue**
   - Events carry a UUID and a sequence number and are flushed in order, in batches of 50.
-  - Cumulative events (activity, notes) are coalesced. A notes event carries only the fields edited in the panel since the last one was sent.
-  - A network or server error keeps the batch for retry: on every action, on `chrome.alarms` every 30 s, and on **Sync now**.
+  - Cumulative events (activity, notes) are coalesced. A notes event carries only the fields edited in the panel since the last one was sent, plus a `base`: what the extension last knew the dashboard had for those fields. If the dashboard's text has changed since (typed there meanwhile), the server keeps it and adds the panel's text below the notes under a marker, so neither version is lost. The result reports the stored text, and the panel shows it with a "both versions kept" note.
+  - The queue is capped at about 5 MB (storage holds 10 MB in all). Past that, activity snapshots go first, then the code of the oldest captured submissions (the submission and its verdict stay), and only then the new change. The panel says what was not kept until the queue has been sent.
+  - A network or server error keeps the batch for retry: on every action, on `chrome.alarms` every 30 s (the alarm is checked for each time the service worker starts, so disabling and re-enabling the extension doesn't stop it), and on **Sync now**.
   - `rejected` results move to a failed list that is visible in the panel.
   - If the server keeps failing on a batch while it otherwise answers (its ping succeeds), events are retried one at a time, and one that still fails is set aside so the rest can sync. A set-aside event keeps its data and can be sent again with **Retry** in the panel. While the dashboard is offline, broken (every request fails) or not the program answering at that address, nothing is counted against any event.
 - **Reconciliation:** every 30 s, local sessions with nothing waiting to be sent are checked against the server. A session finished or abandoned in the dashboard unbinds its tabs, and text typed in the dashboard replaces the panel's copy. A session the server no longer has is forgotten only after the dashboard's ping confirms it is the dashboard answering.
@@ -74,6 +75,7 @@ LeetCode page ──(MAIN world: fetch/XHR observer)──postMessage──▶ i
   2. A direct visit gets an offer (start, resume, history or ignore), shown in the page and in the panel.
   3. A second tab on the same problem auto-shares the open session.
   4. After a browser restart, the extension offers to resume.
+  - A tab that navigates off leetcode.com is unbound (`tabs.onUpdated`; Chrome hides other sites' addresses, which is enough to tell). The session stays open, and returning to the problem offers to resume it. The tab's study-plan offer is dropped then too, and when the tab closes.
 
 ## Testing
 
