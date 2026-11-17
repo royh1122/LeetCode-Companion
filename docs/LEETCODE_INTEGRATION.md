@@ -31,14 +31,14 @@ The extension **observes your normal browser activity; it never makes requests t
 
 - There is no polling of private endpoints, no extra requests, no rate-limit exposure, and nothing bypassing auth or bot protection.
 - It reads only the user's own traffic in the user's own browser.
-- It needs minimal permissions: `storage`, `sidePanel` and `alarms`. Host access is limited to `leetcode.com`, `127.0.0.1` and `localhost`. It doesn't need `tabs`, `scripting`, `webRequest` or `cookies`.
+- It needs minimal permissions: `storage`, `sidePanel` and `alarms`. Host access is limited to `leetcode.com`, `127.0.0.1` and `localhost`. In [server mode](SERVER_MODE.md) it asks, when you pair, for access to the one dashboard address you entered (`optional_host_permissions`). It doesn't need `tabs`, `scripting`, `webRequest` or `cookies`.
 - Your LeetCode credentials are never touched. Data goes only to the local dashboard.
 
 ### Risks and fragility (be aware)
 
 - These are **internal endpoints and may change without notice.** If LeetCode moves Submit to GraphQL or renames a path, capture stops silently on their side. In that case the side panel shows **"Capture unavailable on this page"** only if the hook itself fails to load. If the hook loads but the endpoints changed, you will simply see no submissions appear. Use **Log a submission manually** in that case.
 - The unit tests use fixtures based on real responses (ids and marketing text replaced) and published shapes (`apps/extension/test/fixtures.ts`). Re-check them against DevTools → Network if capture breaks.
-- Another script running on leetcode.com (an XSS there, or another extension) could forge `postMessage` events or plant fake page data. The extension limits what that can do: a submission is accepted only for the problem open in that tab, a verdict only for a submission it saw, message sizes are capped, a study-plan offer still needs your click to import, and an imported list only fills in missing problem details. The worst case is fake submissions for the problem you have open, in *your* local history. Such a script can't read your data, get the pairing token or change the dashboard address: the service worker only answers those requests from the extension's own pages.
+- Another script running on leetcode.com (an XSS there, or another extension) could forge `postMessage` events or plant fake page data. The extension limits what that can do: a submission is accepted only for the problem open in that tab, a verdict only for a submission it saw, message sizes are capped, a study-plan offer still needs your click to import, and an imported list only fills in missing problem details. The worst case is fake submissions for the problem you have open, in *your* local history. Such a script can't read your data, get the pairing key, pair the extension or change the dashboard address: the service worker only answers those requests from the extension's own pages.
 - The Terms may discourage automated access. This extension performs none, but you are responsible for how you use it.
 
 ## Reliable vs. best-effort
@@ -77,8 +77,9 @@ The extension **observes your normal browser activity; it never makes requests t
 
 ## Extension ↔ dashboard security
 
-- The dashboard binds to `127.0.0.1` only. `proxy.ts` rejects any request whose `Host` isn't loopback, which blocks DNS rebinding.
-- `/api/ext/*` requires `Authorization: Bearer <pairing token>`. The token is random (192-bit), compared in constant time, and rotatable.
+- The dashboard binds to `127.0.0.1` only, unless [server mode](SERVER_MODE.md) is configured. `proxy.ts` (rules in `packages/shared/src/request-policy.ts`) rejects any request whose `Host` isn't loopback or one of the server-mode addresses, which blocks DNS rebinding. An `X-Forwarded-Host` from a local proxy must pass the same test.
+- **Pairing.** Each browser is its own device (`devices` table). Settings → Devices → Add a device creates a one-time code: 8 characters, about 40 bits, valid for 10 minutes, single use, void after 5 wrong tries, stored only as a hash. `POST /api/ext/pair` swaps the code for that device's own random key (256-bit). Only the key's SHA-256 is stored. Removing a device makes its key fail at once. Pairing identifies and revokes devices; in server mode the private network, not pairing, keeps others out.
+- `/api/ext/*` (except `/pair`) requires `Authorization: Bearer <device key>`, looked up by hash and compared in constant time. Each request updates that device's last-seen time, and stored sync events record the device.
   - Requests with a web `Origin` are refused.
   - No CORS headers are ever sent, so web pages can neither read responses nor pass the preflight that the `Authorization` header would trigger.
 - Dashboard APIs (`/api/export`, `/api/revision`) accept same-origin requests only. Next.js server actions check `Origin` against `Host`. Pages send `X-Frame-Options: DENY`.

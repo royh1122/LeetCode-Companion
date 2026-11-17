@@ -31,9 +31,10 @@ Business rules live in exactly one place. The extension imports URL and verdict 
 | `submissions` | Code versions + judge results. Unique on platform id; unique fingerprint fallback. `kind` = submit or run. `attribution` = bound / inferred / manual / none. |
 | `problem_notes`, `problem_note_revisions` | Permanent concept notes (structured fields) plus previous versions. |
 | `review_state` | Derived SRS state per problem (re-computable from sessions). |
-| `sync_events` | Every extension event, processed at most once; status and error kept for debugging. |
+| `sync_events` | Every extension event, processed at most once; status, error and the sending device kept for debugging. |
+| `devices` | Paired browsers (one per extension install): name, SHA-256 of its key, last seen, extension version. The pre-devices shared token became the device "This computer" on upgrade. |
 | `daily_snapshots` | Backlog and mastery per day for trend charts. |
-| `app_meta` | Settings, pairing token, revision counter, session aliases. |
+| `app_meta` | Settings, the pending pairing code (hashed), revision counter, session aliases. |
 
 - Foreign keys are enforced. Problems can't be deleted while referenced, and deleting a plan sets `assignments.plan_id` to null, so history survives.
 - Multi-row operations run in transactions (nested ones use savepoints).
@@ -47,6 +48,21 @@ Business rules live in exactly one place. The extension imports URL and verdict 
 - Autosave fields save after 800 ms idle, on blur and when the field leaves the page (in-app navigation). They show *Saving… / Saved / Not saved — retrying* and warn before unload while dirty.
   - The same text can be edited in another tab or in the extension's side panel. Each save sends the text the field last saw stored; if the stored text has changed since, nothing is written and the field shows the other version with **Keep mine** / **Use the other version**.
   - A field with no unsaved edits follows the stored text after a refresh.
+
+## Server mode and the request boundary
+
+See [SERVER_MODE.md](SERVER_MODE.md) for setup and the security model.
+- **Config flow.**
+  - `scripts/server-config.ts` reads `<data dir>/server.json`; the env vars `LCC_ALLOWED_HOSTS` and `LCC_LISTEN` override it. Parsing and validation live in `packages/shared/src/server-config.ts`.
+  - `npm run up` resolves both before anything starts (an invalid config stops the start), hands the result to the server as those env vars, and binds to `0.0.0.0` only for `listen: "network"`.
+  - The server itself reads only env: `apps/web/src/lib/server-mode.ts` (cached per process) and `next.config.ts` (`serverActions.allowedOrigins`).
+  - `next start` evaluates `next.config.ts` at start, so a change needs a restart but no rebuild. The e2e boundary check confirms that an origin added only through env passes Next's server-action check.
+- **Boundary.**
+  - `apps/web/src/proxy.ts` is a thin wrapper around the pure `decideRequest` (`packages/shared/src/request-policy.ts`, unit-tested).
+  - The Host must be loopback or a configured host, and a forwarded host must be one too.
+  - Dashboard API origins must match the effective host, or be a configured host (for proxies that rewrite Host).
+- **Devices** (`packages/db/src/devices.ts`): pairing codes, per-device keys, and the one-time conversion of the old shared token (`migrateLegacyPairing`, run in `openDb` after migrations).
+- **Dev builds.** The e2e runner builds into its own `apps/web/.next-e2e` (`LCC_NEXT_DIST_DIR`) and empties it at the start of each run. A dev cache from older sources makes the first pages reload repeatedly while it catches up. On `dev:demo` that only costs a few seconds, but it can outlast the e2e flows' waits.
 
 ## Extension
 
@@ -86,4 +102,4 @@ LeetCode page ──(MAIN world: fetch/XHR observer)──postMessage──▶ i
 | Extension logic | `apps/extension/test` | Controller with in-memory storage and a fake API; LeetCode-shaped fixtures |
 | Dashboard E2E | `tests/e2e/ui-flow.ts` | Playwright against the running app |
 | Extension E2E | `tests/e2e/extension-flow.ts` | Built extension in Chromium + real dashboard + stub LeetCode at real URLs, including study-plan pickup |
-| Security boundary | `tests/e2e/boundary.ts` | Plain HTTP checks of Host, Origin, cross-site, token and header rules against the dashboard the E2E run starts |
+| Security boundary | `tests/e2e/boundary.ts` | Plain HTTP checks of Host (including server-mode and forwarded hosts), Origin, cross-site, key, pairing and header rules against the dashboard the E2E run starts (in server mode with one extra address) |

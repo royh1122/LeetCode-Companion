@@ -13,7 +13,9 @@ You keep solving on LeetCode. The dashboard handles everything around it:
 
 This is an independent, open-source personal tool. It is not affiliated with or endorsed by LeetCode.
 
-**Privacy.** Everything stays on your computer. The dashboard listens only on `127.0.0.1`, your code and notes live in a local SQLite file, and nothing is sent to any third party. The extension only observes what your own LeetCode page already loads; it never sends requests to LeetCode, stores no password, and talks only to your local dashboard. You are responsible for using it within LeetCode's terms of service.
+**Privacy.** Everything stays on your computer. The dashboard listens only on `127.0.0.1`, your code and notes live in a local SQLite file, and nothing is sent to any third party. The extension only observes what your own LeetCode page already loads; it never sends requests to LeetCode, stores no password, and talks only to the dashboard you paired it with. You are responsible for using it within LeetCode's terms of service.
+
+**Other devices (optional).** [Server mode](docs/SERVER_MODE.md) lets the same dashboard serve your other devices over a private network such as Tailscale or home Wi-Fi: computers with the extension capture as usual, and a tablet, phone or any other browser can plan, review and log attempts by hand. It is off by default and has no login, so it must never face the public internet.
 
 Third-party material is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -95,16 +97,17 @@ npm run ext:build        # → apps/extension/dist
 ```
 
 1. Go to `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `apps/extension/dist`.
-2. The options page opens. Keep the dashboard URL as `http://127.0.0.1:4317`.
-3. In the dashboard, go to **Settings → Browser extension**, copy the pairing token, and paste it into the extension's options. Then click **Save & test connection**.
+2. The options page opens. Keep the dashboard address as `http://127.0.0.1:4317`.
+3. In the dashboard, go to **Settings → Devices → Add a device**. Enter the code it shows in the extension's options (or paste the whole line), then click **Pair & test connection**. Each browser is paired separately and listed under Settings → Devices, where it can be renamed or removed.
 4. Pin the extension. Clicking its icon opens the side panel.
 
 After changing extension code, run `npm run ext:build` again and click reload on the extension's card in `chrome://extensions`.
 
 **What the extension's permissions are for:**
 - **Read and change data on leetcode.com:** a script on LeetCode pages observes the page's own Submit/Run/verdict requests and, on study-plan pages, the plan's question list. It doesn't change the page's requests or send any of its own.
-- **127.0.0.1 / localhost:** talking to your dashboard. The options page only accepts a dashboard address on this computer.
-- **storage:** settings, the pairing token, and changes waiting to sync.
+- **127.0.0.1 / localhost:** talking to your dashboard on this computer.
+- **Other addresses (optional, asked for when you pair):** only in [server mode](docs/SERVER_MODE.md), for a dashboard on another computer. The extension asks for access to that one address; it never gets access to other sites.
+- **storage:** settings, this browser's pairing key, and changes waiting to sync.
 - **sidePanel:** the side panel.
 - **alarms:** syncing every 30 seconds.
 
@@ -155,7 +158,7 @@ After changing extension code, run `npm run ext:build` again and click reload on
 - **Moving to another computer.**
   1. On the old one, stop the dashboard (`npm run down`), then copy `data/leetcode-companion.db` (or take a fresh `npm run db:backup` and copy that file). Stopping first matters: a copy taken while the dashboard runs can miss recent changes still in the `-wal` file.
   2. On the new one, set up the app as above (Setup), but don't create a plan. Copy the file to `data/leetcode-companion.db` before the first start, or with the dashboard stopped run `npm run db:restore -- <copied file>`.
-  3. Start the dashboard and pair the extension again (the pairing token comes with the database; the extension on the new computer still needs it pasted in).
+  3. Start the dashboard and pair the extension on the new computer (Settings → Devices → Add a device). The old computer's devices come with the database; remove the ones you no longer use.
   4. Alternatively, **Settings → Export JSON** on the old computer and **Import JSON** on the new one merges your history into whatever is already there.
 
 ## Updating
@@ -198,7 +201,8 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
 - Idempotent sync and offline session aliasing; export/import round trip.
 - Dashboard E2E: start practice (opens a LeetCode tab tagged with the session) → autosaved notes → manual submission → finish via keyboard → Today and the question page update, history lists it, and the other pages render. The runner creates the plan beforehand with new questions on every day, so the end-to-end tests pass on any weekday; the plan-creation form itself is not exercised by them.
 - Extension E2E with the **real built extension in Chromium** against the real dashboard, using a stand-in LeetCode page served at real `leetcode.com/problems/...` URLs that issues the same Submit/Run/check requests:
-  - pairing works, and a bad token is rejected;
+  - pairing by code through a server-mode address works (the dashboard's line pasted into the options page), and a bad key is rejected;
+  - removing the device in Settings stops its sync, and pairing again with a new code delivers what was queued meanwhile;
   - the tab binds to the dashboard session;
   - WA then Accepted are captured with separate code versions, and the Run (made via XHR) is stored separately;
   - the dashboard updates live;
@@ -210,19 +214,21 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
   - forged page messages (verdicts for submissions it never saw, submits for another problem) are ignored (unit tests).
 - Security boundary, checked over plain HTTP against the dashboard the E2E run starts (the dev server, which uses the same `proxy.ts` and headers as production):
   - a foreign `Host` header returns 403 (DNS rebinding);
+  - in server mode, the listed address is accepted (directly or forwarded by a local proxy) and a wrong port, a lookalike or a foreign forwarded host is refused; a server action from the listed origin passes Next's origin check;
   - cross-site or other-origin API calls return 403;
-  - extension endpoints without the right token return 401, and a web origin or CORS preflight is refused;
+  - extension endpoints without a paired device's key return 401, and a web origin or CORS preflight is refused (the pairing endpoint too);
   - no CORS headers are sent, and `X-Frame-Options: DENY` is set.
 
 **Not verified, and needs a manual check by you:**
 - **Capture on your real, logged-in LeetCode account.** The automated tests use a stand-in page, because the automated browser gets Cloudflare's bot challenge on leetcode.com. On a real account, Submit capture has been confirmed by hand for Wrong Answer and Accepted results; Run capture and other verdicts have not. LeetCode can change its page at any time. **First-run check:** submit any problem once with the side panel open and confirm the verdict appears. If it doesn't, the panel may show "Capture unavailable" (the page hook didn't load) or simply show nothing (LeetCode changed its requests); either way you can log manually (see [docs/LEETCODE_INTEGRATION.md](docs/LEETCODE_INTEGRATION.md)).
 - Active-time accuracy is an estimate (see the doc). Chrome's real side-panel window was exercised as a regular extension page, not the docked panel.
+- **Server mode on a real network.** The tests use a stand-in address on this computer. Tailscale Serve, home Wi-Fi and the Docker image have not been checked yet (see [docs/SERVER_MODE.md](docs/SERVER_MODE.md)).
 
-More detail: [Architecture](docs/ARCHITECTURE.md) · [Scheduling policy](docs/SCHEDULING.md) · [LeetCode integration & limitations](docs/LEETCODE_INTEGRATION.md)
+More detail: [Architecture](docs/ARCHITECTURE.md) · [Scheduling policy](docs/SCHEDULING.md) · [LeetCode integration & limitations](docs/LEETCODE_INTEGRATION.md) · [Server mode](docs/SERVER_MODE.md)
 
 ## Troubleshooting
 
-- **Side panel says "Not paired" or "token rejected".** Copy the token again from Settings and paste it into the extension options. If you rotated the token, you must re-pair.
+- **Side panel says "Not paired" or "Not recognised by the dashboard".** The browser was never paired, or was removed under Settings → Devices. Create a code there (**Add a device**) and enter it in the extension options.
 - **"Dashboard unreachable — n change(s) queued".** Start the dashboard. Queued events sync automatically every 30 s, or immediately when you click **Sync now**.
 - **"Capture unavailable on this page".** Reload the LeetCode tab after installing or reloading the extension.
 - **Submissions don't appear, but there's no "Capture unavailable".** LeetCode may have changed its requests. Log submissions manually, and see the integration doc.
