@@ -11,10 +11,15 @@
  * `--background` (used by the Windows shortcut): the server is started as a
  * hidden, detached process that writes to data/server.log, and this script
  * exits once the dashboard answers. Stop it with `npm run down` / the Stop shortcut.
+ *
+ * Server mode (docs/SERVER_MODE.md): `<data dir>/server.json` names extra addresses the dashboard
+ * answers at and whether it listens beyond this computer. It is read on every start.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { serverConfigEnv, serverModeOn, type ServerConfig } from "../packages/shared/src/server-config";
+import { loadServerConfig, serverConfigPath } from "./server-config";
 
 const ROOT = path.resolve(__dirname, "..");
 const BACKGROUND = process.argv.includes("--background");
@@ -159,7 +164,30 @@ function openBrowser() {
   opener.unref();
 }
 
+/**
+ * Server mode (data/server.json, or LCC_ALLOWED_HOSTS / LCC_LISTEN): read it before anything starts,
+ * and hand the result to the build and the server as env vars. A broken file stops the start.
+ */
+function readServerConfig(): ServerConfig {
+  let config: ServerConfig;
+  try {
+    config = loadServerConfig(DATA_DIR);
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e));
+    throw new Error("Not started: fix or remove the server mode settings, then start again.");
+  }
+  Object.assign(process.env, serverConfigEnv(config));
+  return config;
+}
+
+function describeServerMode(config: ServerConfig) {
+  if (!serverModeOn(config)) return;
+  const where = config.listen === "network" ? "listening on all network interfaces" : "listening on this computer only (use Tailscale Serve or another local proxy)";
+  log(`Server mode is on (${serverConfigPath(DATA_DIR)}): also answers at ${config.hosts.join(", ")}; ${where}.`);
+}
+
 async function main() {
+  const config = readServerConfig();
   const state = await probe();
   if (state === "other") throw new Error(`Port ${PORT} is used by another program, not the dashboard. Close it, then start again.`);
   if (state === "ours") {
@@ -179,13 +207,13 @@ async function main() {
     throw new Error("The other start did not finish within 3 minutes.");
   }
   try {
-    await start();
+    await start(config);
   } finally {
     releaseLock();
   }
 }
 
-async function start() {
+async function start(config: ServerConfig) {
 
   const builtAt = mtime(BUILD_STAMP);
   if (!builtAt || newestMtime(WEB_INPUTS) > builtAt) {
@@ -210,7 +238,10 @@ async function start() {
   run("npm run db:migrate"); // backs up first if a migration is pending
   log("Starting the dashboard…");
   const nextBin = require.resolve("next/dist/bin/next", { paths: [path.join(ROOT, "apps/web")] });
-  const args = [nextBin, "start", "-H", "127.0.0.1", "-p", String(PORT)];
+  // The launcher itself always talks to 127.0.0.1 (probe, browser); "network" only widens where the server listens.
+  const bind = config.listen === "network" ? "0.0.0.0" : "127.0.0.1";
+  describeServerMode(config);
+  const args = [nextBin, "start", "-H", bind, "-p", String(PORT)];
   const cwd = path.join(ROOT, "apps/web");
   let ready = false;
   let server: ChildProcess;
