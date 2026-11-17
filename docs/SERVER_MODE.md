@@ -47,18 +47,19 @@ The environment variables `LCC_ALLOWED_HOSTS` (a comma-separated list) and `LCC_
 
 On the computer that runs the dashboard (your laptop, a Pi or a mini PC), with Tailscale installed and signed in:
 
+0. Turn on HTTPS certificates for your tailnet, once: Tailscale admin console → **DNS** → **HTTPS Certificates** → **Enable**. Without them Serve can't offer `https://`. Note that this publishes your machines' tailnet names in public Certificate Transparency logs.
 1. Find the machine's tailnet name: `tailscale status`, or the Tailscale admin console. It looks like `my-laptop.tailnet-name.ts.net`.
 2. Create `data/server.json`. If Serve uses HTTPS port 443, list the name with no port; if it uses another port, such as 8443, list `name:8443`.
    ```json
    { "hosts": ["my-laptop.tailnet-name.ts.net"], "listen": "loopback" }
    ```
 3. Start the dashboard: `npm run up`.
-4. Share it on your tailnet: `tailscale serve --bg http://127.0.0.1:4317`. Check what is already served first with `tailscale serve status`. To use another HTTPS port, add `--https=8443`.
+4. Share it on your tailnet: `tailscale serve --bg http://127.0.0.1:4317`. Check what is already served first with `tailscale serve status`. To use another HTTPS port, add `--https=8443`. The very first request can take half a minute while Tailscale fetches the certificate.
 5. On another device in your tailnet, open `https://my-laptop.tailnet-name.ts.net`.
 
 To stop sharing, run `tailscale serve --https=443 off` (or the port you used).
 
-*Status: not yet verified on a real tailnet. The automated tests simulate the headers a local proxy sends.*
+*Status: verified 2026-11-17 with Tailscale 1.104 on Windows (`--https=8443`, `hosts` listing the name without a port): from an iPad in Safari, pages, navigation and changes (server actions, including Add a device) worked. Pairing by code, using the device key, and removing the device were checked through the same address from the laptop.*
 
 ### B. Home Wi-Fi (or a tailnet IP) without a proxy
 

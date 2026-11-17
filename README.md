@@ -222,7 +222,7 @@ Then click reload on the extension's card in `chrome://extensions` and refresh y
 **Not verified, and needs a manual check by you:**
 - **Capture on your real, logged-in LeetCode account.** The automated tests use a stand-in page, because the automated browser gets Cloudflare's bot challenge on leetcode.com. On a real account, Submit capture has been confirmed by hand for Wrong Answer and Accepted results; Run capture and other verdicts have not. LeetCode can change its page at any time. **First-run check:** submit any problem once with the side panel open and confirm the verdict appears. If it doesn't, the panel may show "Capture unavailable" (the page hook didn't load) or simply show nothing (LeetCode changed its requests); either way you can log manually (see [docs/LEETCODE_INTEGRATION.md](docs/LEETCODE_INTEGRATION.md)).
 - Active-time accuracy is an estimate (see the doc). Chrome's real side-panel window was exercised as a regular extension page, not the docked panel.
-- **Server mode on a real network.** The tests use a stand-in address on this computer. Tailscale Serve, home Wi-Fi and the Docker image have not been checked yet (see [docs/SERVER_MODE.md](docs/SERVER_MODE.md)).
+- **Server mode on a real network.** Tailscale Serve was checked by hand on 2026-11-17: the dashboard from an iPad in Safari. Home Wi-Fi (`listen: network`) and the Docker image have not been checked on a real network yet (see [docs/SERVER_MODE.md](docs/SERVER_MODE.md)).
 
 More detail: [Architecture](docs/ARCHITECTURE.md) · [Scheduling policy](docs/SCHEDULING.md) · [LeetCode integration & limitations](docs/LEETCODE_INTEGRATION.md) · [Server mode](docs/SERVER_MODE.md)
 
