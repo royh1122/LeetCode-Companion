@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/.next
+**/.next-e2e
+**/dist
+data
+test-results
+coverage
+*.log
+.env*
+CLAUDE.md
+ROADMAP.md
+reports
+research_notes
+.claude
+.agents

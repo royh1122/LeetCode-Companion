@@ -1,0 +1,41 @@
+# Example: LeetCode Companion on an always-on machine or a small cloud server, reachable only over
+# your Tailscale network (docs/SERVER_MODE.md). Not tested by the project's automated tests.
+#
+# 1. Create an auth key at https://login.tailscale.com/admin/settings/keys and put it in a .env file
+#    next to this one:   TS_AUTHKEY=tskey-auth-...
+# 2. Replace "tailnet-name" below with your tailnet's name (Tailscale admin → DNS).
+# 3. docker compose up -d   → open http://lcc.tailnet-name.ts.net:4317 from any device on your tailnet.
+#
+# No port is published on the host: the dashboard has no login, so it must never face the public
+# internet. Traffic between your devices is encrypted by Tailscale.
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: lcc
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    # Shares the Tailscale container's network: it is reachable at the tailnet name, nowhere else.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - LCC_ALLOWED_HOSTS=lcc.tailnet-name.ts.net:4317
+    volumes:
+      - lcc-data:/data
+    restart: unless-stopped
+
+  # Instead of Tailscale, behind a reverse proxy on the same machine (e.g. Caddy on a private LAN):
+  # remove the tailscale service and network_mode above, and use
+  #   ports: ["127.0.0.1:4317:4317"]
+  # so only that proxy on this machine can reach it. Set LCC_ALLOWED_HOSTS to the proxy's address.
+
+volumes:
+  tailscale-state:
+  lcc-data:
