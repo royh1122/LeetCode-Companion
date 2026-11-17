@@ -337,9 +337,24 @@ export const syncEvents = sqliteTable(
     error: text("error"),
     clientCreatedAt: integer("client_created_at").notNull(),
     receivedAt: integer("received_at").notNull().default(now),
+    /** The paired device that sent it (no foreign key: removing a device keeps its history). Null before devices existed. */
+    deviceId: text("device_id"),
   },
   (t) => [index("sync_events_received_idx").on(t.receivedAt)],
 );
+
+/**
+ * Browsers paired with this dashboard (one row per extension install). Each has its own key; only its
+ * SHA-256 is stored. Pairing identifies and revokes devices: the network is what keeps others out.
+ */
+export const devices = sqliteTable("devices", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  lastSeenAt: integer("last_seen_at"),
+  lastVersion: text("last_version"),
+  ...timestamps,
+});
 
 /** Daily snapshot for backlog / mastery trend charts. */
 export const dailySnapshots = sqliteTable("daily_snapshots", {

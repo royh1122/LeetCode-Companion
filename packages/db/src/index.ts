@@ -16,3 +16,4 @@ export * from "./transfer";
 export * from "./extension";
 export * from "./maintenance";
 export * from "./undo";
+export * from "./devices";

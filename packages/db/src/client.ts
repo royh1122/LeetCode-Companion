@@ -5,6 +5,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import fs from "node:fs";
 import path from "node:path";
 import * as schema from "./schema";
+import { migrateLegacyPairing } from "./devices";
 
 /** Works for both the root database and a transaction handle. */
 export type Db = BaseSQLiteDatabase<"sync", Database.RunResult, typeof schema>;
@@ -128,6 +129,7 @@ export function openDb(file: string = defaultDbPath(), opts: OpenOptions = {}): 
       if (existed && !opts.skipBackup) backupDatabaseSync(sqlite, "pre-migration");
       migrate(db as never, { migrationsFolder: folder });
     }
+    migrateLegacyPairing(db); // one-time; a no-op afterwards
   }
   return db;
 }

@@ -151,7 +151,7 @@ function sessionIdOf(ev: SyncEvent): string | null {
  * UUID). Permanent failures are stored and reported as "rejected" so the
  * client can stop retrying; nothing is silently dropped.
  */
-export function processSyncEvents(db: Db, raw: unknown[], log: (msg: string, extra?: unknown) => void = () => {}): ProcessResult[] {
+export function processSyncEvents(db: Db, raw: unknown[], log: (msg: string, extra?: unknown) => void = () => {}, deviceId: string | null = null): ProcessResult[] {
   const results: ProcessResult[] = [];
   for (const item of raw) {
     const parsed = syncEventSchema.safeParse(item);
@@ -172,7 +172,7 @@ export function processSyncEvents(db: Db, raw: unknown[], log: (msg: string, ext
       const out = db.transaction((tx) => {
         const r = apply(tx, ev);
         tx.insert(syncEvents)
-          .values({ id: ev.id, clientId: ev.clientId, seq: ev.seq, type: ev.type, sessionId: r.sessionId ?? sessionIdOf(ev), payload: redact(ev), status: "processed", clientCreatedAt: ev.createdAt })
+          .values({ id: ev.id, clientId: ev.clientId, seq: ev.seq, type: ev.type, sessionId: r.sessionId ?? sessionIdOf(ev), payload: redact(ev), status: "processed", clientCreatedAt: ev.createdAt, deviceId })
           .run();
         return r;
       });
@@ -182,7 +182,7 @@ export function processSyncEvents(db: Db, raw: unknown[], log: (msg: string, ext
       log("sync: event failed", { id: ev.id, type: ev.type, error });
       if (!(e instanceof DomainError)) throw e; // unexpected → 500, client retries later
       db.insert(syncEvents)
-        .values({ id: ev.id, clientId: ev.clientId, seq: ev.seq, type: ev.type, sessionId: sessionIdOf(ev), payload: redact(ev), status: "rejected", error, clientCreatedAt: ev.createdAt })
+        .values({ id: ev.id, clientId: ev.clientId, seq: ev.seq, type: ev.type, sessionId: sessionIdOf(ev), payload: redact(ev), status: "rejected", error, clientCreatedAt: ev.createdAt, deviceId })
         .onConflictDoNothing()
         .run();
       results.push({ id: ev.id, status: "rejected", error });
