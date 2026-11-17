@@ -1,5 +1,4 @@
 import { eq, sql } from "drizzle-orm";
-import { randomBytes } from "node:crypto";
 import type { z } from "zod";
 import { appSettingsSchema, defaultAppSettings, type AppSettings } from "@lcc/shared";
 import type { Db } from "./client";
@@ -85,16 +84,3 @@ export function updateAppSettings(db: Db, patch: Partial<AppSettings>): AppSetti
   bumpRevision(db);
   return next;
 }
-
-/** The pre-devices shared pairing token (migrated to a device by migrateLegacyPairing). Only the e2e runner still reads it. */
-export function getExtensionToken(db: Db): string {
-  let token = getMeta(db, "extension_token");
-  if (!token) {
-    token = randomBytes(24).toString("base64url");
-    setMeta(db, "extension_token", token);
-  }
-  return token;
-}
-
-
-

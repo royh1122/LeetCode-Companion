@@ -31,6 +31,9 @@ const config: NextConfig = {
   transpilePackages: ["@lcc/shared", "@lcc/scheduler", "@lcc/db"],
   serverExternalPackages: ["better-sqlite3"],
   turbopack: { root: path.join(import.meta.dirname, "..", "..") },
+  // The e2e runner builds into its own folder (emptied each run), so a stale or differently configured
+  // dev cache never makes its pages reload in a loop.
+  distDir: process.env.LCC_NEXT_DIST_DIR || ".next",
   poweredByHeader: false,
   devIndicators: false,
   agentRules: false,

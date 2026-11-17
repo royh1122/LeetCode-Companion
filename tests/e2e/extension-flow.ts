@@ -14,13 +14,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { defaultDbPath, getExtensionToken, openDb } from "@lcc/db";
+import { defaultDbPath } from "@lcc/db";
 import { requireIsolatedDataDir } from "./isolation";
-import { E2E_BASE } from "./port";
+import { E2E_BASE, E2E_SERVER_BASE } from "./port";
 import { OTHER_GRAPHQL_REQUEST, STUDY_PLAN_NEXT_DATA, STUDY_PLAN_REQUEST, STUDY_PLAN_RESPONSE } from "../../apps/extension/test/fixtures";
 
 const BASE = process.env.LCC_URL ?? E2E_BASE;
-const EXT = path.resolve("apps/extension/dist");
+// The runner passes a copy with test-only access to *.localhost (see run.ts); standalone runs use the build.
+const EXT = path.resolve(process.env.LCC_E2E_EXT ?? "apps/extension/dist");
 const args = process.argv.slice(2);
 const REAL = args.includes("--real-leetcode");
 const SHOTS = args.find((a) => !a.startsWith("--"));
@@ -127,6 +128,28 @@ async function swState(sw: Worker) {
   return sw.evaluate(async () => ({ tabs: (await chrome.storage.session.get("tabs")).tabs, local: await chrome.storage.local.get(null) }));
 }
 
+/**
+ * Settings → Devices → Add a device on the dashboard (through the server-mode address), then the
+ * whole "address  CODE" line pasted into the extension's options, as a user on another device would.
+ */
+async function pairWithCode(ctx: BrowserContext, opts: Page) {
+  const settings = await ctx.newPage();
+  await settings.goto(`${E2E_SERVER_BASE}/settings`);
+  await settings.waitForLoadState("networkidle");
+  await settings.waitForTimeout(2500); // next dev reloads once when HMR connects
+  await settings.getByRole("button", { name: "Add a device" }).click();
+  const line = ((await settings.locator("[data-pairing-line]").textContent({ timeout: 10000 })) ?? "").trim();
+  if (!line.startsWith(E2E_SERVER_BASE)) throw new Error(`pairing line shows the wrong address: ${line}`);
+  await opts.bringToFront();
+  await opts.fill("#server", "");
+  await opts.fill("#code", line);
+  if ((await opts.inputValue("#server")) !== E2E_SERVER_BASE) throw new Error(`pasted line not split: server=${await opts.inputValue("#server")}`);
+  await opts.click("button[type=submit]");
+  await expect(opts.getByText(/Paired as/)).toBeVisible({ timeout: 15000 });
+  await expect(settings.getByText("Paired. The new device")).toBeVisible({ timeout: 15000 });
+  await settings.close();
+}
+
 function readDb() {
   // Read-only view of what the dashboard stored (separate connection; WAL allows this).
   return new Database(defaultDbPath(), { readonly: true });
@@ -146,7 +169,6 @@ async function waitFor<T>(fn: () => T | Promise<T>, ok: (v: T) => boolean, label
 async function main() {
   requireIsolatedDataDir("extension-flow.ts");
   if (!fs.existsSync(path.join(EXT, "manifest.json"))) throw new Error("Build the extension first: npm run ext:build");
-  const token = getExtensionToken(openDb());
   const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-e2e-"));
   const ctx = await chromium.launchPersistentContext(userDir, {
     channel: "chromium",
@@ -173,11 +195,16 @@ async function main() {
       }));
     await opts.waitForLoadState();
     await expect(opts.locator("#server")).not.toHaveValue("", { timeout: 5000 });
-    await opts.fill("#server", BASE);
-    await opts.fill("#token", token);
-    await opts.click("button[type=submit]");
-    await expect(opts.getByText("Connected and paired")).toBeVisible({ timeout: 10000 });
-    step("paired with dashboard");
+    // Pair through the server-mode address, the way another device would: the dashboard's
+    // "Add a device" line pasted into the extension's options.
+    await pairWithCode(ctx, opts);
+    const granted = await sw.evaluate((o) => chrome.permissions.contains({ origins: [`${o}/*`] }), E2E_SERVER_BASE);
+    if (!granted) throw new Error("no host access to the server-mode address after pairing");
+    const cfg = (await swState(sw)).local.config as { serverUrl: string; token: string; deviceId?: string };
+    if (cfg.serverUrl !== E2E_SERVER_BASE || !cfg.token || !cfg.deviceId) throw new Error(`unexpected config after pairing: ${JSON.stringify({ ...cfg, token: !!cfg.token })}`);
+    const device = readDb().prepare("select name from devices where id = ?").get(cfg.deviceId) as { name: string } | undefined;
+    if (!device) throw new Error("paired device not in the dashboard");
+    step(`paired by code through ${E2E_SERVER_BASE} as "${device.name}"`);
     // A wrong token is rejected.
     const bad = await sw.evaluate(async (b) => (await fetch(`${b}/api/ext/ping`, { headers: { Authorization: "Bearer nope" } })).status, BASE);
     if (bad !== 401) throw new Error(`expected 401 for a bad token, got ${bad}`);
@@ -274,7 +301,7 @@ async function main() {
     await sw.evaluate(async (b) => {
       const { config } = (await chrome.storage.local.get("config")) as { config: object };
       await chrome.storage.local.set({ config: { ...config, serverUrl: b } });
-    }, BASE);
+    }, E2E_SERVER_BASE);
     await panel.getByRole("button", { name: "Sync now" }).click();
     await waitFor(() => (readDb().prepare("select count(*) c from submissions where session_id = ? and kind='submit'").get(sessionId) as { c: number }).c, (c) => c === 3, "queued submission synced after reconnect");
     await expect(panel.locator("#sync")).toContainText("Synced", { timeout: 10000 });
@@ -389,27 +416,28 @@ async function main() {
     if (sessionStatus(dupId!) !== "in_progress") throw new Error("the previous problem's session should stay open");
     step("in-app navigation: tab unbound from the old problem; new problem stored with its own title and number");
 
-    // ---- Re-pairing after the pairing token changes ----
+    // ---- Device removed in the dashboard → re-paired with a new code ----
     await dash.goto(`${BASE}/settings`);
-    await dash.getByRole("button", { name: /Rotate/ }).click();
-    await dash.getByRole("button", { name: /Confirm/ }).click();
-    const newToken = await waitFor(() => (readDb().prepare("select value from app_meta where key = 'extension_token'").get() as { value: string }).value, (v) => v !== token, "token rotated");
+    const deviceRow = dash.locator(`[data-device-id="${cfg.deviceId}"]`);
+    await deviceRow.getByRole("button", { name: /^Remove/ }).click();
+    await deviceRow.getByRole("button", { name: `Remove ${device.name}` }).click();
+    await expect(deviceRow).toHaveCount(0, { timeout: 10000 });
     await nav.bringToFront();
-    await nav.click("#submit"); // its sync is refused: the extension still has the old token
+    await nav.click("#submit"); // its sync is refused: this browser's key was removed
     await p4.bringToFront();
-    await expect(p4.locator("#sync")).toContainText("Pairing token rejected", { timeout: 10000 });
+    await expect(p4.locator("#sync")).toContainText("Not recognised by the dashboard", { timeout: 10000 });
     await expect(p4.getByRole("button", { name: "Options" })).toBeVisible();
     const opts2 = await ctx.newPage();
     await opts2.goto(`chrome-extension://${extId}/options.html`);
     await expect(opts2.locator("#server")).not.toHaveValue("", { timeout: 5000 });
-    await opts2.fill("#token", newToken);
-    await opts2.click("button[type=submit]");
-    await expect(opts2.getByText("Connected and paired")).toBeVisible({ timeout: 10000 });
+    await pairWithCode(ctx, opts2);
     await p4.bringToFront();
     await p4.getByRole("button", { name: "Sync now" }).click();
-    await waitFor(() => (readDb().prepare("select count(*) c from submissions s join problems p on p.id = s.problem_id where p.slug = 'valid-anagram' and s.kind = 'submit'").get() as { c: number }).c, (c) => c === 1, "submission queued during the token change synced after re-pairing");
+    await waitFor(() => (readDb().prepare("select count(*) c from submissions s join problems p on p.id = s.problem_id where p.slug = 'valid-anagram' and s.kind = 'submit'").get() as { c: number }).c, (c) => c === 1, "submission queued while removed synced after re-pairing");
     await expect(p4.locator("#sync")).toContainText("Synced", { timeout: 10000 });
-    step("token rotated → panel says the token was rejected → re-paired in options → queued submission synced");
+    const devicesNow = (readDb().prepare("select count(*) c from devices").get() as { c: number }).c;
+    if (devicesNow !== 1) throw new Error(`expected 1 paired device after re-pairing, got ${devicesNow}`);
+    step("device removed in Settings → panel asks to pair again → re-paired with a new code → queued submission synced");
 
     if (REAL) {
       await ctx.unrouteAll({ behavior: "ignoreErrors" });

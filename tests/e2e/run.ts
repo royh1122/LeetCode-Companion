@@ -1,8 +1,10 @@
 /**
  * `npm run test:e2e` — builds the extension, starts the dashboard on a fresh
  * temporary data directory on its own port (4327 by default, see port.ts; the real
- * dashboard on 4317 can keep running), checks the local security
- * boundary, runs the dashboard UI flow and the extension flow, then shuts everything down.
+ * dashboard on 4317 can keep running) in server mode with one extra address (port.ts), checks
+ * the security boundary, runs the dashboard UI flow and the extension flow (which pairs through
+ * that address), then shuts everything down.
+ * The flows load a temporary copy of the built extension with test-only access to *.localhost.
  * Flags: --real-leetcode (also check detection/injection on the real, logged-out leetcode.com)
  *        --shots <dir>   (save screenshots)
  */
@@ -11,7 +13,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { E2E_BASE, E2E_PORT } from "./port";
+import { E2E_BASE, E2E_PORT, E2E_SERVER_HOST } from "./port";
 
 const root = path.resolve(import.meta.dirname ?? __dirname, "..", "..");
 const args = process.argv.slice(2);
@@ -20,7 +22,33 @@ const shots = shotsIdx >= 0 ? args[shotsIdx + 1] : undefined;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-e2e-data-"));
 // LCC_DB_PATH would take priority over the temporary data directory: never pass it on.
 const { LCC_DB_PATH: _dbPath, ...inherited } = process.env;
-const env = { ...inherited, LCC_DATA_DIR: dataDir, LCC_URL: E2E_BASE, NEXT_TELEMETRY_DISABLED: "1" };
+// A copy of the built extension for the flows (see grantTestHostAccess); apps/extension/dist stays as built.
+const testExtDir = path.join(dataDir, "extension");
+// Server mode on, with one extra address (see port.ts), as `npm run up` would pass it from server.json.
+const env = {
+  ...inherited,
+  LCC_DATA_DIR: dataDir,
+  LCC_URL: E2E_BASE,
+  NEXT_TELEMETRY_DISABLED: "1",
+  LCC_ALLOWED_HOSTS: E2E_SERVER_HOST,
+  LCC_LISTEN: "loopback",
+  LCC_E2E_EXT: testExtDir,
+  // Its own Next build folder, emptied at the start of each run (see main), never shared with dev:demo.
+  LCC_NEXT_DIST_DIR: ".next-e2e",
+};
+
+/**
+ * Headless Chrome can't click the extension's permission prompt. The test copy of the extension
+ * therefore already holds access to *.localhost, so chrome.permissions.request() for the
+ * server-mode address resolves at once; the options page still makes the same call.
+ */
+function grantTestHostAccess() {
+  fs.cpSync(path.join(root, "apps", "extension", "dist"), testExtDir, { recursive: true });
+  const file = path.join(testExtDir, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8")) as { host_permissions: string[] };
+  manifest.host_permissions.push("http://*.localhost/*");
+  fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+}
 
 /**
  * True if anything accepts a connection on the port. A raw TCP check: an HTTP request that
@@ -113,10 +141,14 @@ async function main() {
   let log = "";
   try {
     run("npm run ext:build");
+    grantTestHostAccess();
     execSync("npx tsx scripts/db.ts migrate", { cwd: root, env, stdio: "inherit" });
     execSync("npx tsx scripts/db.ts sample", { cwd: root, env, stdio: "inherit" });
     // A plan with new questions every day, so the flows don't depend on the weekday.
     execSync("npx tsx tests/e2e/setup-plan.ts", { cwd: root, env, stdio: "inherit" });
+    // Start from an empty build folder: a dev cache left from an earlier run with older sources made
+    // the first pages reload over and over while it caught up, longer than the flows wait.
+    fs.rmSync(path.join(root, "apps", "web", env.LCC_NEXT_DIST_DIR), { recursive: true, force: true });
     server = spawn("npx", ["next", "dev", "-H", "127.0.0.1", "-p", String(E2E_PORT)], {
       cwd: path.join(root, "apps", "web"),
       env,

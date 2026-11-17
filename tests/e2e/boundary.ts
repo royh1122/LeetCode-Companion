@@ -1,9 +1,9 @@
 /**
- * Local security boundary checks (run by `npm run test:e2e` against the dashboard it starts).
+ * Security boundary checks (run by `npm run test:e2e` against the dashboard it starts, in server mode with one extra address).
  * Plain HTTP requests, because browsers won't let a test set a foreign Host header.
  */
 import http from "node:http";
-import { E2E_PORT } from "./port";
+import { E2E_PORT, E2E_SERVER_HOST } from "./port";
 
 type Res = { status: number; headers: http.IncomingHttpHeaders };
 
@@ -56,6 +56,24 @@ async function main() {
     if (r.status !== 403 && !r.body.includes("Invalid Server Actions request")) throw new Error(`${name}: refused for another reason (${r.status}: ${r.body.slice(0, 200)})`);
     console.log(`✓ ${name} → refused (${r.status})`);
   }
+  // Server mode: the runner starts the dashboard with one extra address (E2E_SERVER_HOST).
+  const extra = E2E_SERVER_HOST;
+  const extraName = extra.replace(/:\d+$/, "");
+  expectStatus("server-mode address", await request("/", { headers: { Host: extra } }), 200);
+  expectStatus("server-mode address on another port", await request("/", { headers: { Host: `${extraName}:1` } }), 403);
+  expectStatus("a lookalike of the server-mode address", await request("/", { headers: { Host: `evil.${extra}` } }), 403);
+  expectStatus("forwarded server-mode address (local proxy)", await request("/", { headers: { Host: host, "X-Forwarded-Host": extra } }), 200);
+  expectStatus("forwarded foreign host", await request("/", { headers: { Host: host, "X-Forwarded-Host": "evil.example" } }), 403);
+  expectStatus("dashboard API from the server-mode origin, Host rewritten by a proxy", await request("/api/revision", { headers: { Host: host, Origin: `https://${extra}`, "Sec-Fetch-Site": "same-origin" } }), 200);
+  // Next's own server-action check reads allowedOrigins at start: an origin it lists passes to "unknown action".
+  const viaProxy = await action(`http://${extra}`);
+  if (viaProxy.status !== 409) throw new Error(`server action from the server-mode origin (Host rewritten): expected 409, got ${viaProxy.status}: ${viaProxy.body.slice(0, 200)}`);
+  console.log("✓ server action from the server-mode origin passes the origin check (allowedOrigins read at start)");
+  // Pairing endpoint: no key needed, but still extension-only.
+  const pair = (headers: Record<string, string>, method = "POST") => request("/api/ext/pair", { method, headers: { Host: extra, ...json, ...headers }, body: method === "POST" ? '{"code":"0000-0000","name":"x"}' : undefined });
+  expectStatus("pairing with no code waiting", await pair({}), 401);
+  expectStatus("pairing from a web origin", await pair({ Origin: "https://evil.example" }), 403);
+  expectStatus("CORS preflight to the pairing endpoint", await pair({ Origin: "https://evil.example" }, "OPTIONS"), 403);
   // Pages: another site may link to the dashboard, but not load a page as an image or a frame
   // (rendering Today plans the day).
   const fromSite = (mode: string, dest: string) => ({ Host: host, "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": mode, "Sec-Fetch-Dest": dest });
