@@ -1,7 +1,9 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { touchExtensionSeen, verifyExtensionToken } from "@lcc/db";
+import { effectiveBaseUrl } from "@lcc/shared";
 import { db } from "./server";
+import { serverConfig } from "./server-mode";
 
 /** Returns an error response if the request isn't from the paired extension. */
 export function requireExtension(req: Request): NextResponse | null {
@@ -14,7 +16,8 @@ export function requireExtension(req: Request): NextResponse | null {
   return null;
 }
 
+/** The dashboard's address as the caller reached it (forwarded values only from an allowed proxy). */
 export function dashboardUrl(req: Request) {
-  const host = req.headers.get("host") ?? "127.0.0.1:4317";
-  return `http://${host}`;
+  const h = req.headers;
+  return effectiveBaseUrl(h.get("host") ?? "", h.get("x-forwarded-host"), h.get("x-forwarded-proto"), serverConfig());
 }

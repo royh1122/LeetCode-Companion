@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 import path from "node:path";
+import { parseServerConfig } from "../../packages/shared/src/server-config";
 
 const dev = process.env.NODE_ENV !== "production";
+
+// Server mode (LCC_ALLOWED_HOSTS / LCC_LISTEN, set by `npm run up` from data/server.json or by
+// Docker). Parsing here means invalid values stop the server at start.
+const server = parseServerConfig(null, { LCC_ALLOWED_HOSTS: process.env.LCC_ALLOWED_HOSTS, LCC_LISTEN: process.env.LCC_LISTEN });
 
 /**
  * Content-Security-Policy. Next.js inlines its own scripts and there is no nonce set-up, so
@@ -30,7 +35,9 @@ const config: NextConfig = {
   devIndicators: false,
   agentRules: false,
   experimental: {
-    serverActions: { bodySizeLimit: "25mb", allowedOrigins: ["127.0.0.1:4317", "localhost:4317"] },
+    // Server mode hosts are added at start (next start reads this file), so a proxy that rewrites
+    // Host (Tailscale Serve, Caddy) still passes Next's own server-action origin check.
+    serverActions: { bodySizeLimit: "25mb", allowedOrigins: ["127.0.0.1:4317", "localhost:4317", ...server.hosts] },
   },
   async headers() {
     return [
