@@ -30,7 +30,7 @@ const deny = (reason: string): RequestVerdict => ({ allow: false, status: 403, r
 const ALLOW: RequestVerdict = { allow: true };
 
 /** First value of a possibly comma-separated forwarded header. */
-export const firstForwarded = (v: string | null | undefined): string | null => v?.split(",")[0]?.trim() || null;
+const firstForwarded = (v: string | null | undefined): string | null => v?.split(",")[0]?.trim() || null;
 
 export function decideRequest(req: RequestFacts, config: ServerConfig): RequestVerdict {
   if (!isAllowedHost(req.host, config)) return deny("Forbidden host");

@@ -13,7 +13,7 @@ You keep solving on LeetCode. The dashboard handles everything around it:
 
 This is an independent, open-source personal tool. It is not affiliated with or endorsed by LeetCode.
 
-**Privacy.** Everything stays on your computer. The dashboard listens only on `127.0.0.1`, your code and notes live in a local SQLite file, and nothing is sent to any third party. The extension only observes what your own LeetCode page already loads; it never sends requests to LeetCode, stores no password, and talks only to the dashboard you paired it with. You are responsible for using it within LeetCode's terms of service.
+**Privacy.** Everything stays on your computer. By default the dashboard listens only on `127.0.0.1`, your code and notes live in a local SQLite file, and nothing is sent to any third party. The extension only observes what your own LeetCode page already loads; it never sends requests to LeetCode, stores no password, and talks only to the dashboard you paired it with. You are responsible for using it within LeetCode's terms of service.
 
 **Other devices (optional).** [Server mode](docs/SERVER_MODE.md) lets the same dashboard serve your other devices over a private network such as Tailscale or home Wi-Fi: computers with the extension capture as usual, and a tablet, phone or any other browser can plan, review and log attempts by hand. It is off by default and has no login, so it must never face the public internet.
 
@@ -129,13 +129,13 @@ After changing extension code, run `npm run ext:build` again and click reload on
 
 | Command | What it does |
 |---|---|
-| `npm run up` / `npm run down` | Start the dashboard (build only if needed, open the browser; add `-- --background` to run it hidden) / stop it |
+| `npm run up` / `npm run down` | Start the dashboard (build only if needed, open the browser; add `-- --background` to run it hidden) / stop it. `up` also reads `data/server.json` for [server mode](docs/SERVER_MODE.md). |
 | `npm run shortcuts` | Windows: create Start/Stop shortcuts on the Desktop and in the Start menu |
 | `npm run dev` | Dashboard with hot reload (port 4317) |
 | `npm run app` | Build and run the production dashboard (port 4317) |
 | `npm run ext:build` / `ext:watch` | Build the extension once / on change |
 | `npm test` | Unit and integration tests (scheduler, database, shared helpers, extension logic, and the `db:*` scripts against a temporary database) |
-| `npm run test:e2e` | End-to-end: starts a dashboard on a temporary database, checks the local security boundary, and runs the UI flow and the extension flow in Chromium. It uses its own port (4327, or `LCC_E2E_PORT`), so the dashboard on 4317 can keep running; it refuses to run if the test port is taken. Needs Playwright's Chromium once: `npx playwright install chromium`. Add `-- --real-leetcode` to also load a real leetcode.com page. |
+| `npm run test:e2e` | End-to-end: starts a dashboard on a temporary database (in server mode with a stand-in address, `lcc-e2e.localhost`), checks the security boundary, and runs the UI flow and the extension flow in Chromium (the extension pairs by code through that address). It uses its own port (4327, or `LCC_E2E_PORT`), so the dashboard on 4317 can keep running; it refuses to run if the test port is taken. Needs Playwright's Chromium once: `npx playwright install chromium`. Add `-- --real-leetcode` to also load a real leetcode.com page. |
 | `npm run typecheck` | Strict TypeScript across all packages, scripts and end-to-end tests |
 | `npm run lint` | Biome lint (no formatter) |
 | `npm run demo` then `npm run dev:demo` | Generates 5 weeks of fake history in `data/demo` and serves it on port **4318**. Your real data is untouched. |
@@ -159,7 +159,7 @@ After changing extension code, run `npm run ext:build` again and click reload on
   1. On the old one, stop the dashboard (`npm run down`), then copy `data/leetcode-companion.db` (or take a fresh `npm run db:backup` and copy that file). Stopping first matters: a copy taken while the dashboard runs can miss recent changes still in the `-wal` file.
   2. On the new one, set up the app as above (Setup), but don't create a plan. Copy the file to `data/leetcode-companion.db` before the first start, or with the dashboard stopped run `npm run db:restore -- <copied file>`.
   3. Start the dashboard and pair the extension on the new computer (Settings → Devices → Add a device). The old computer's devices come with the database; remove the ones you no longer use.
-  4. Alternatively, **Settings → Export JSON** on the old computer and **Import JSON** on the new one merges your history into whatever is already there.
+  4. Alternatively, **Settings → Export JSON** on the old computer and **Import JSON** on the new one merges your history into whatever is already there. Paired devices aren't part of the export; pair the extension again on the new computer.
 
 ## Updating
 

@@ -16,8 +16,6 @@ export interface ServerConfig {
 
 export const SERVER_CONFIG_FILE = "server.json";
 
-export const defaultServerConfig = (): ServerConfig => ({ hosts: [], listen: "loopback" });
-
 export class ServerConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -96,7 +94,7 @@ export const serverModeOn = (config: ServerConfig) => config.hosts.length > 0;
 
 const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-export const isLoopbackHostname = (hostname: string) => LOOPBACK_NAMES.has(hostname.toLowerCase());
+const isLoopbackHostname = (hostname: string) => LOOPBACK_NAMES.has(hostname.toLowerCase());
 
 /** Splits a Host header value into hostname and port (port may be ""). */
 export function splitHost(host: string): { hostname: string; port: string } {

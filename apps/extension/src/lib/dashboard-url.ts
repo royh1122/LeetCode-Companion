@@ -39,16 +39,6 @@ export function hasBuiltInAccess(url: string): boolean {
   }
 }
 
-/** True when the address is valid (see normalizeDashboardUrl). */
-export function isDashboardUrl(url: string): boolean {
-  try {
-    normalizeDashboardUrl(url);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Splits what the user typed or pasted: the dashboard's "Add a device" line is "<address>  <CODE>",
  * but either part may come alone. A code is the last token when it looks like XXXX-XXXX.

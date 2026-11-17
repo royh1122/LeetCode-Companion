@@ -17,7 +17,7 @@ export type Device = typeof devices.$inferSelect;
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 8; // 40 bits; with 5 tries and 10 minutes, guessing is hopeless
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
-export const PAIRING_CODE_ATTEMPTS = 5;
+const PAIRING_CODE_ATTEMPTS = 5;
 const CODE_KEY = "pairing_code";
 /** Set once the pre-devices pairing token has been turned into a device (so removing it sticks). */
 const LEGACY_DONE_KEY = "legacy_token_migrated";
@@ -41,7 +41,7 @@ export function normalizePairingCode(input: string): string {
     .replace(/[IL]/g, "1");
 }
 
-export const formatPairingCode = (code: string) => `${code.slice(0, 4)}-${code.slice(4)}`;
+const formatPairingCode = (code: string) => `${code.slice(0, 4)}-${code.slice(4)}`;
 
 export function cleanDeviceName(name: unknown): string {
   const s = typeof name === "string" ? name.replace(/\s+/g, " ").trim().slice(0, NAME_MAX) : "";

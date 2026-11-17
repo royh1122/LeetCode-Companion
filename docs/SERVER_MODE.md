@@ -104,4 +104,4 @@ The code works once, for 10 minutes, and stops working after 5 wrong tries. The 
 
 ## Backups and moving
 
-Server mode doesn't change where data lives. It is the same SQLite file, with the same automatic backups before migrations and imports. See the README's data section.
+Server mode doesn't change where data lives. It is the same SQLite file, with the same automatic backups before migrations and imports. See the README's data section. Paired devices travel with the database file, but not with a JSON export.

@@ -17,7 +17,7 @@ export interface ApiConfig {
   version: string;
 }
 
-/** Talks only to the configured local dashboard. Never to any third party. */
+/** Talks only to the dashboard this browser is paired with. Never to any third party. */
 export function httpApi(getConfig: () => Promise<ApiConfig>, fetchImpl: typeof fetch = fetch): Api {
   async function call<T>(path: string, init?: RequestInit, notFoundIsNull = false): Promise<ApiResult<T>> {
     const cfg = await getConfig();
