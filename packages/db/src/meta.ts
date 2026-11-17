@@ -86,7 +86,7 @@ export function updateAppSettings(db: Db, patch: Partial<AppSettings>): AppSetti
   return next;
 }
 
-/** Pairing token for the browser extension. Generated once; can be rotated. */
+/** The pre-devices shared pairing token (migrated to a device by migrateLegacyPairing). Only the e2e runner still reads it. */
 export function getExtensionToken(db: Db): string {
   let token = getMeta(db, "extension_token");
   if (!token) {
@@ -96,9 +96,5 @@ export function getExtensionToken(db: Db): string {
   return token;
 }
 
-export function rotateExtensionToken(db: Db): string {
-  const token = randomBytes(24).toString("base64url");
-  setMeta(db, "extension_token", token);
-  return token;
-}
+
 

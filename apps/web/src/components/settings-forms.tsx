@@ -1,51 +1,12 @@
 "use client";
 
-import { Download, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
+import { Download, Upload } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import type { AppSettings } from "@lcc/shared";
 import type { TimeZoneGroup } from "@/lib/timezones";
 import { changedFields } from "@/lib/diff";
-import { backupNowAction, importJsonAction, pruneBackupsAction, rotateTokenAction, updateSettingsAction } from "@/lib/actions";
-import { CopyButton } from "./code";
+import { backupNowAction, importJsonAction, pruneBackupsAction, updateSettingsAction } from "@/lib/actions";
 import { Button, Input, Label, Select } from "./ui";
-
-export function TokenBox({ token }: { token: string }) {
-  const [show, setShow] = useState(false);
-  const [t, setT] = useState(token);
-  const [pending, start] = useTransition();
-  const [confirm, setConfirm] = useState(false);
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs">{show ? t : "•".repeat(32)}</code>
-        <Button size="sm" variant="ghost" onClick={() => setShow((s) => !s)} aria-label={show ? "Hide token" : "Show token"}>
-          {show ? <EyeOff /> : <Eye />}
-        </Button>
-        <CopyButton text={t} label="Copy pairing token" />
-        {confirm ? (
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                const r = await rotateTokenAction();
-                if (r.ok) setT(r.data);
-                setConfirm(false);
-              })
-            }
-          >
-            Confirm — the extension must be re-paired
-          </Button>
-        ) : (
-          <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>
-            <RefreshCw /> Rotate
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 /** Deletes old automatic backups after a confirmation. Manual backups stay. */
 export function PruneBackupsButton({ automatic, keep = 20 }: { automatic: number; keep?: number }) {

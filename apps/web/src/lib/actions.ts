@@ -338,8 +338,24 @@ export async function updateSettingsAction(patch: unknown) {
     core.updateAppSettings(d, appSettingsSchema.parse(deepMerge(core.getAppSettings(d), p)));
   });
 }
-export async function rotateTokenAction() {
-  return wrap(() => core.rotateExtensionToken(db()));
+// ---- Devices (pairing) ----
+// Any page that can reach the dashboard may do these: in server mode the private network is the lock,
+// and pairing identifies and revokes devices (docs/SERVER_MODE.md).
+const deviceId = z.string().uuid();
+export async function createPairingCodeAction() {
+  return wrap(() => core.createPairingCode(db()));
+}
+export async function cancelPairingCodeAction() {
+  return wrap(() => core.cancelPairingCode(db()));
+}
+export async function renameDeviceAction(id: string, name: string) {
+  return wrap(() => core.renameDevice(db(), deviceId.parse(id), z.string().max(200).parse(name)));
+}
+/** Confirmed in the UI. No history is deleted, so no backup: the device just has to pair again. */
+export async function removeDeviceAction(id: string) {
+  return wrap(() => {
+    if (!core.removeDevice(db(), deviceId.parse(id))) throw new core.DomainError("not_found", "That device was already removed.");
+  });
 }
 export async function backupNowAction() {
   try {
