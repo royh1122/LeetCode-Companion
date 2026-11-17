@@ -85,7 +85,7 @@ function renderSync() {
     text = "Not paired — open the extension options";
   } else if (conn.status === "unauthorized") {
     color = "var(--bad)";
-    text = "Pairing token rejected — re-pair in options";
+    text = "Not recognised by the dashboard — pair again in options";
   } else if (conn.status === "offline") {
     color = "var(--warn)";
     text = queueLength ? `Dashboard unreachable — ${queueLength} change(s) queued` : "Dashboard unreachable";

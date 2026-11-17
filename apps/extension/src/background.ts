@@ -5,8 +5,9 @@
  */
 import type { Reflection } from "@lcc/shared";
 import { ensureSyncAlarm, SYNC_ALARM } from "./lib/alarms";
-import { httpApi } from "./lib/api";
+import { httpApi, pairWithDashboard } from "./lib/api";
 import { Controller, isLeetCodeUrl, type TabState } from "./lib/controller";
+import { normalizeDashboardUrl } from "./lib/dashboard-url";
 import { isAllowedMessage } from "./lib/gate";
 import type { Intercepted } from "./lib/intercept";
 import type { BgRequest } from "./lib/messages";
@@ -104,6 +105,15 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     case "config:set": {
       const c = await controller.setConfig(msg.config);
       return c;
+    }
+    case "pair": {
+      // The options page has already asked for permission to reach this address (it needs the click).
+      const serverUrl = normalizeDashboardUrl(msg.serverUrl);
+      const r = await pairWithDashboard(serverUrl, msg.code, msg.name, VERSION);
+      if (!r.ok) return r;
+      // Queued events stay queued and go to this dashboard with the new key.
+      await controller.setConfig({ serverUrl, token: r.token, deviceId: r.deviceId });
+      return { ok: true, name: r.name };
     }
     case "ping": {
       const cfg = await controller.getConfig();

@@ -1,6 +1,7 @@
 import { SESSION_TEXT_FIELDS, type ExtensionContext, type ProblemHint, type Reflection, type SessionText, type SyncEvent, type SyncEventType, type Verdict } from "@lcc/shared";
 import { applyHeartbeat, displayActiveMs, isActive, type ActivityState } from "./activity";
 import type { Api, ApiError } from "./api";
+import { normalizeDashboardUrl } from "./dashboard-url";
 import type { CapturedList, Intercepted } from "./intercept";
 import type { KV } from "./storage";
 
@@ -15,8 +16,11 @@ import type { KV } from "./storage";
 
 export interface Config {
   serverUrl: string;
+  /** This browser's own key, from pairing (Settings → Devices in the dashboard). */
   token: string;
   clientId: string;
+  /** The dashboard's id for this browser (shown nowhere; for support/debugging). */
+  deviceId?: string;
 }
 
 export interface LocalSubmission {
@@ -79,18 +83,6 @@ export interface TabState {
   panelInputAt?: number;
 }
 
-/**
- * Only http on 127.0.0.1 or localhost. The dashboard serves plain http, and the extension's
- * host permissions cover only those two addresses over http.
- */
-export function isLocalDashboardUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname);
-  } catch {
-    return false;
-  }
-}
 
 /** Chrome hides the address of pages the extension can't access (`undefined`): those aren't LeetCode either. */
 export function isLeetCodeUrl(url: string | undefined): boolean {
@@ -210,8 +202,8 @@ export class Controller {
     return c;
   }
   async setConfig(patch: Partial<Config>) {
-    // Code and notes must only ever go to a dashboard on this computer.
-    if (patch.serverUrl !== undefined && !isLocalDashboardUrl(patch.serverUrl)) throw new Error("The dashboard must run on this computer, at http://localhost or http://127.0.0.1.");
+    // Code and notes go only to the dashboard the user entered: normalised to its origin, http(s) only.
+    if (patch.serverUrl !== undefined) patch = { ...patch, serverUrl: normalizeDashboardUrl(patch.serverUrl) };
     return this.lock(async () => {
       const c = { ...(await this.getConfig()), ...patch };
       await this.deps.local.set({ config: c, conn: { status: c.token ? "unknown" : "unpaired", lastOkAt: null, lastError: null } satisfies Conn });

@@ -3,6 +3,7 @@ import { parseProblemSlug, type ExtensionContext, type ExtensionSessionState } f
 import { applyHeartbeat, isActive } from "../src/lib/activity";
 import { ensureSyncAlarm } from "../src/lib/alarms";
 import { isLeetCodeUrl } from "../src/lib/controller";
+import { hasBuiltInAccess } from "../src/lib/dashboard-url";
 import { interpret, isInterceptedMessage, studyPlanFromNextData } from "../src/lib/intercept";
 import { pageTitle } from "../src/lib/page-info";
 import { setup } from "./helpers";
@@ -190,10 +191,12 @@ describe("Controller", () => {
     expect((await env.ctl.panelState(1)).session!.submissions).toHaveLength(0);
   });
 
-  it("only ever talks to a dashboard on this computer", async () => {
+  it("talks only to the dashboard address it was given, normalised to its origin", async () => {
     const env = setup();
-    await expect(env.ctl.setConfig({ serverUrl: "https://evil.example.com" })).rejects.toThrow(/this computer/);
     await expect(env.ctl.setConfig({ serverUrl: "http://127.0.0.1:4320" })).resolves.toMatchObject({ serverUrl: "http://127.0.0.1:4320" });
+    await expect(env.ctl.setConfig({ serverUrl: "https://my-laptop.tail1234.ts.net:8443/settings" })).resolves.toMatchObject({ serverUrl: "https://my-laptop.tail1234.ts.net:8443" });
+    await expect(env.ctl.setConfig({ serverUrl: "ftp://example.com" })).rejects.toThrow(/http/);
+    await expect(env.ctl.setConfig({ serverUrl: "https://user:pw@example.com" })).rejects.toThrow(/user name/);
   });
 
   it("captures submit + result into the bound session, once, ignoring repeated polls", async () => {
@@ -569,10 +572,15 @@ describe("milestone F: extension robustness", () => {
     expect((await env.ctl.panelState(1)).queueWarning).toBeNull();
   });
 
-  it("F7: only accepts a plain http dashboard address (the extension may not call https://localhost)", async () => {
+  it("F7: https://localhost is allowed now, but needs a runtime grant (only http loopback is built in)", async () => {
     const env = setup();
-    await expect(env.ctl.setConfig({ serverUrl: "https://localhost:4317" })).rejects.toThrow(/this computer/);
+    await expect(env.ctl.setConfig({ serverUrl: "https://localhost:4317" })).resolves.toMatchObject({ serverUrl: "https://localhost:4317" });
     await expect(env.ctl.setConfig({ serverUrl: "http://localhost:4317" })).resolves.toMatchObject({ serverUrl: "http://localhost:4317" });
+    expect(hasBuiltInAccess("http://localhost:4317")).toBe(true);
+    expect(hasBuiltInAccess("http://127.0.0.1:4317")).toBe(true);
+    expect(hasBuiltInAccess("https://localhost:4317")).toBe(false);
+    expect(hasBuiltInAccess("http://[::1]:4317")).toBe(false);
+    expect(hasBuiltInAccess("http://laptop.ts.net")).toBe(false);
   });
 
   it("F9: after in-app navigation the previous problem's title is not used; the real one fills in later", async () => {

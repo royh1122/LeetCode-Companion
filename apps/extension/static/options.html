@@ -16,20 +16,24 @@
   </head>
   <body>
     <h1>LeetCode Companion</h1>
-    <p class="muted">Pair this extension with your local dashboard. It only ever talks to this server.</p>
+    <p class="muted">Pair this browser with your LeetCode Companion dashboard. It only ever talks to that dashboard.</p>
     <form id="form">
       <div class="field">
-        <label class="label" for="server">Dashboard URL</label>
-        <input id="server" type="text" placeholder="http://127.0.0.1:4317" required />
+        <label class="label" for="server">Dashboard address</label>
+        <input id="server" type="text" placeholder="http://127.0.0.1:4317" autocomplete="off" spellcheck="false" required />
+        <span class="small muted">On this computer: http://127.0.0.1:4317. In server mode: the address shown under Settings &rarr; Devices &rarr; Add a device.</span>
       </div>
       <div class="field">
-        <label class="label" for="token">Pairing token (Dashboard → Settings → Browser extension)</label>
-        <input id="token" type="password" autocomplete="off" required />
+        <label class="label" for="code">Pairing code (Dashboard &rarr; Settings &rarr; Devices &rarr; Add a device)</label>
+        <input id="code" type="text" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required />
+        <span class="small muted">You can paste the whole line from the dashboard into either field.</span>
       </div>
       <div class="btns">
-        <button class="primary" type="submit">Save &amp; test connection</button>
+        <button class="primary" type="submit">Pair &amp; test connection</button>
       </div>
     </form>
+    <p id="paired" class="small muted"></p>
+    <p id="http-note" class="small" hidden>This address uses plain http. That is fine on a private network that encrypts traffic itself (Tailscale does), not on public Wi-Fi.</p>
     <div id="status" class="small"></div>
     <h2 class="label" style="margin-top:24px">What this extension does</h2>
     <ul class="small">
@@ -37,7 +41,7 @@
       <li>On leetcode.com/studyplan pages, it can read the plan's question list from what the page loaded, and sends it to your dashboard only when you click Import in the side panel.</li>
       <li>It estimates active time from tab visibility, window focus and recent input (no keystroke contents are read or stored).</li>
       <li>It never sends requests to LeetCode itself and never stores your LeetCode credentials.</li>
-      <li>Data is sent only to the dashboard URL above (localhost), authenticated with the pairing token.</li>
+      <li>Data is sent only to the dashboard address above, authenticated with this browser&rsquo;s own key from pairing. Removing the device in the dashboard stops it.</li>
     </ul>
     <script src="options.js" type="module"></script>
   </body>

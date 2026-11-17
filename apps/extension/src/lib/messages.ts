@@ -21,6 +21,7 @@ export type BgRequest =
   | { type: "list:import"; tabId?: number }
   | { type: "config:get" }
   | { type: "config:set"; config: Partial<Config> }
+  | { type: "pair"; serverUrl: string; code: string; name: string }
   | { type: "ping" }
   | { type: "open-dashboard"; path?: string };
 
