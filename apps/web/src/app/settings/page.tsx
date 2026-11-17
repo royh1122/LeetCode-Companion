@@ -1,6 +1,6 @@
 import path from "node:path";
 import Link from "next/link";
-import { backupDir, defaultDbPath, getAppSettings, getExtensionLastSeen, getExtensionToken, listBackups, listUnattributed, recentSyncEvents } from "@lcc/db";
+import { backupDir, defaultDbPath, getAppSettings, getDevicesLastSeen, getExtensionToken, listBackups, listUnattributed, recentSyncEvents } from "@lcc/db";
 import { VerdictBadge } from "@/components/badges";
 import { DataControls, GeneralSettingsForm, PruneBackupsButton, TokenBox } from "@/components/settings-forms";
 import { timeZoneGroups } from "@/lib/timezones";
@@ -15,7 +15,7 @@ export default function SettingsPage() {
   const d = db();
   const settings = getAppSettings(d);
   const token = getExtensionToken(d);
-  const seen = getExtensionLastSeen(d);
+  const seen = getDevicesLastSeen(d);
   const events = recentSyncEvents(d, 25);
   const unattributed = listUnattributed(d);
   const allBackups = listBackups();

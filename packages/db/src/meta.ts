@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { z } from "zod";
 import { appSettingsSchema, defaultAppSettings, type AppSettings } from "@lcc/shared";
 import type { Db } from "./client";
@@ -102,24 +102,3 @@ export function rotateExtensionToken(db: Db): string {
   return token;
 }
 
-export function verifyExtensionToken(db: Db, presented: string | null | undefined): boolean {
-  if (!presented) return false;
-  const expected = Buffer.from(getExtensionToken(db));
-  const got = Buffer.from(presented);
-  return expected.length === got.length && timingSafeEqual(expected, got);
-}
-
-/** Records the last time the extension talked to us (for the "extension connected" indicator). */
-export function touchExtensionSeen(db: Db, info: { version?: string }) {
-  setMeta(db, "extension_last_seen", JSON.stringify({ at: Date.now(), ...info }));
-}
-
-export function getExtensionLastSeen(db: Db): { at: number; version?: string } | null {
-  const raw = getMeta(db, "extension_last_seen");
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
